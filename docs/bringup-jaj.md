@@ -167,9 +167,9 @@ Without cameras, `imx219` logs I2C NACK (`-121`) — expected until modules are 
 ## Architecture notes
 
 - **SoM eMMC** (`/dev/mmcblk0`): default boot — see `wic/simaai-modalix-image.wks` in `meta-simaai`.
-- **Carrier NVMe (M.2 Key M)**: optional storage on **PCIE0 x4** (present on Modalix SoM).
+- **Carrier NVMe (M.2 Key M)**: optional storage on **PCIE0 x4** — **verified working** on JAJ + Modalix.
 - **DT**: base `modalix-som_16g.dtb` + `ark-jaj.dtbo` overlay.
-- **JAJ status**: overlay deployed and verified on hardware (identity + dual CSI cameras + host I/O).
+- **JAJ status**: overlay deployed and verified on hardware (identity + dual CSI cameras + host I/O + Key M NVMe).
 - **USB-C dual-role**: see [usb-dual-role.md](usb-dual-role.md).
 
 ### PCIe / M.2: Jetson JAJ vs Modalix SoM
@@ -177,17 +177,21 @@ Without cameras, `imx219` logs I2C NACK (`-121`) — expected until modules are 
 JAJ is laid out for **Jetson Orin NX/Nano** SODIMM PCIe. Modalix is pin-compatible for many
 functions but **does not expose the same PCIe controllers** on the gold finger.
 
-| Link | Jetson / JAJ use | Modalix SoM (005-HW-32 Rev 2.1) |
-|------|------------------|----------------------------------|
-| **PCIE0** x4 | M.2 NVMe (Key M), etc. | **Present** — full RX/TX 0–3 + CLK + PERST/CLKREQ/WAKE |
-| **PCIE1** x1 | **M.2 Key E** (WiFi/BT modules) | **Not present as PCIe** — SODIMM pins in that region are **ETH1** (and related), plus `PCIE1_CLK_M2C` only; no `PCIE1_RX`/`PCIE1_TX` data pairs |
-| **PCIE2** x2 | Shared / other | Present (often USB/HDMI bridge path on SiMa carriers) |
-| **PCIE3** | — | Sideband (PERST/CLKREQ/CLK); not a free Key-E-style x1 |
+| Link | Jetson / JAJ use | Modalix SoM (005-HW-32 Rev 2.1) | JAJ + Modalix status |
+|------|------------------|----------------------------------|----------------------|
+| **PCIE0** x4 | M.2 NVMe (Key M), etc. | **Present** — full RX/TX 0–3 + CLK + PERST/CLKREQ/WAKE | **Works** — e.g. `lspci` NVMe (Silicon Motion), `lsblk` shows `nvme0n1` |
+| **PCIE1** x1 | **M.2 Key E** (WiFi/BT modules) | **Not present as PCIe** — SODIMM pins in that region are **ETH1** (and related), plus `PCIE1_CLK_M2C` only; no `PCIE1_RX`/`PCIE1_TX` data pairs | **Unavailable** (SoM pinout) |
+| **PCIE2** x2 | Shared / other | Present (often USB/HDMI bridge path on SiMa carriers) | Used on-module / bridges as applicable |
+| **PCIE3** | — | Sideband (PERST/CLKREQ/CLK); not a free Key-E-style x1 | — |
 
-**Implication:** With Modalix on JAJ, **M.2 Key E will not get PCIe**. WiFi cards that require
-PCIe on Key E will not enumerate. Workarounds: USB WiFi, SDIO/UART-only modules if sidebands
-are wired, or a different host path. This cannot be fixed in device tree alone — the SoM does
-not route a PCIe1 PHY to those pins.
+**Key M (NVMe):** Confirmed on hardware with Modalix SoM on JAJ. Rootfs typically remains on
+SoM eMMC (`mmcblk0`); the SSD appears as `nvme0n1` and may still hold a prior Jetson/L4T
+partition layout until wiped/reformatted for Linux use.
+
+**Key E (WiFi PCIe):** With Modalix on JAJ, **M.2 Key E will not get PCIe**. WiFi cards that
+require PCIe on Key E will not enumerate. Workarounds: USB WiFi, SDIO/UART-only modules if
+sidebands are wired, or a different host path. This cannot be fixed in device tree alone — the
+SoM does not route a PCIe1 PHY to those pins.
 
 Reference: *Modalix System on Module (SoM) Revision 2 Data Sheet* (Document 005-HW-32),
 Table 2-3 / Chapter 3 pin listing (PCIE0 x4, PCIE2 x2; pins ~167–175 = ETH1 / not PCIE1 data).
@@ -201,6 +205,7 @@ Table 2-3 / Chapter 3 pin listing (PCIE0 x4, PCIE2 x2; pins ~167–175 = ETH1 / 
 | Flash transport | USB recovery | eMMC via netboot or WIC media |
 | Default login | `jetson` | `sima` / `edgeai` |
 | Cameras | jetson-io overlays | `ark-jaj.dtbo` (CSI1+CSI2, FSUSB42 I2C mux) |
+| M.2 Key M NVMe | PCIE0 x4 | **Works** (verified on hardware) |
 | M.2 Key E WiFi | PCIE1 x1 | **Unavailable** (no PCIE1 on Modalix SoM) |
 
 ## Troubleshooting
@@ -211,5 +216,5 @@ Table 2-3 / Chapter 3 pin listing (PCIE0 x4, PCIE2 x2; pins ~167–175 = ETH1 / 
 | U-Boot but no Ethernet | Cable on GbE; `setenv ipaddr` / `serverip`; link lights |
 | Netboot TFTP fails | Host firewall UDP/69; `sudo` for sima-cli on Linux |
 | Kernel panic early | Wrong DTB (must be `modalix-som` class); try without `dtbos` |
-| NVMe not visible | PCIE0 in DT; `lspci`; physical M.2 Key M seating / power |
+| NVMe not visible | PCIE0 / Key M seating / power; expect `lspci` NVMe + `lsblk` `nvme0n1` (Key M works when seated) |
 | Key E WiFi no PCIe device | Expected on Modalix — no PCIE1 data lanes (see above) |
