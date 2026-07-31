@@ -16,6 +16,8 @@ INIT_MANAGER ??= "systemd"
 # Kernel / defconfig — Modalix until carrier-specific configs exist
 KBUILD_DEFCONFIG ?= "simaai_modalix_defconfig"
 UBOOT_MACHINE ?= "sima_modalix_defconfig"
+# meta-simaai common.inc still prefers 6.1%; recipes ship 6.18.x
+PREFERRED_VERSION_linux-simaai ?= "6.18%"
 
 # Default serial console (override per-board if needed)
 BAUD = "${@115200 if d.getVar('BAUDRATE') == None else d.getVar('BAUDRATE')}"

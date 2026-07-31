@@ -1,27 +1,226 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * ARK Just a Jetson (JAJ) carrier with SiMa.ai Modalix SoM
+ *
+ * Base DTB: modalix-som / modalix-som_16g (stock SoM)
+ * Apply at U-Boot:
+ *   setenv fdt_name modalix-som_16g.dtb
+ *   setenv dtbos ark-jaj.dtbo
+ *   saveenv
+ *   boot
+ *
+ * Parallels ark_jetson_kernel products/JAJ:
+ *   - Board model / compatible identity
+ *   - Dual CSI IMX219 (cam0 on CSI0/i2c00, cam1 on CSI1/i2c01)
+ *   - FUSB301 Type-C dual-role @ i2c00 0x25 (stock p3768 keeps this;
+ *     ARK PAB deletes it — JAJ retains USB-C)
+ *   - PCIe USB3 xHCI (TUSB73x0) on pcie3 for dual USB-A + Type-C SS path
+ *
+ * Runtime companion: scripts/ark-jaj-usb-init.sh (FUSB DRP + USB PM).
+ */
+
 /dts-v1/;
 /plugin/;
 
-/*
- * Placeholder overlay: ARK Just a Jetson
- *
- * Applied at runtime via U-Boot:
- *   setenv dtbos ark-jaj.dtbo ; saveenv ; boot
- *
- * Replace fragments with real pinmux / CSI / I2C / PCIe / GPIO nodes
- * during hardware bring-up. Compatible string should match the base DTB.
- */
+&{/} {
+	model = "ARK Just a Jetson with SiMa Modalix SoM";
+	compatible = "ark,just-a-jetson", "simaai,modalix-som", "simaai,modalix";
 
-/ {
-	compatible = "simaai,modalix";
+	jaj_xclk0: jaj-xclk0 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
 
-	fragment@0 {
-		target-path = "/";
-		__overlay__ {
-			ark_jaj {
-				compatible = "ark,just-a-jetson";
-				status = "okay";
-				/* TODO: carrier peripherals (INA238, IMU, CAN, CSI, ...) */
+	jaj_xclk1: jaj-xclk1 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
+
+	ark_jaj {
+		compatible = "ark,just-a-jetson";
+		status = "okay";
+	};
+};
+
+/* ---- Camera 0: CSI0 + i2c00 + IMX219 ------------------------------------ */
+
+&csi0 {
+	status = "okay";
+};
+
+&axi_vdma0 {
+	status = "okay";
+};
+
+&mipi_dphy_rx0 {
+	status = "okay";
+};
+
+&v4l2video0 {
+	status = "okay";
+};
+
+&v4l2vdma0 {
+	status = "okay";
+};
+
+&csi00in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	/* 2-lane IMX219: SiMa driver menu is 456 MHz (not 364, that is 4-lane) */
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&jaj_cam0_ep>;
+	clock-noncontinuous;
+};
+
+&i2c00 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/*
+	 * ON Semiconductor FUSB301 Type-C controller (same 0x25 as Jetson
+	 * p3768 fusb301@25). Seen live on JAJ+Modalix at i2c-0 / i2c00.
+	 *
+	 * Stock eLxr builds TYPEC=y but not TYPEC_TCPM / FUSB drivers, so
+	 * dual-role is programmed from userspace (ark-jaj-usb-init.sh):
+	 *   MODES=DRP_ACC, host present current 1.5A, try source.
+	 */
+	jaj_fusb301: fusb301@25 {
+		compatible = "fcs,fusb301", "onnn,fusb301";
+		reg = <0x25>;
+		status = "okay";
+
+		/* Full dual-role connector description for when TCPM is enabled */
+		usb_con: connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "source";
+		};
+	};
+
+	jaj_imx219_0: imx219@10 {
+		compatible = "sony,imx219";
+		reg = <0x10>;
+		status = "okay";
+
+		clocks = <&jaj_xclk0>;
+		clock-names = "xclk";
+
+		rotation = <180>;
+		orientation = <2>;
+
+		port@1 {
+			jaj_cam0_ep: endpoint@0 {
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <456000000>;
+				remote-endpoint = <&csi00in>;
+				clock-noncontinuous;
 			};
 		};
 	};
+};
+
+/* ---- Camera 1: CSI1 + i2c01 + IMX219 ------------------------------------ */
+
+&csi1 {
+	status = "okay";
+};
+
+&axi_vdma1 {
+	status = "okay";
+};
+
+&mipi_dphy_rx1 {
+	status = "okay";
+};
+
+&v4l2video1 {
+	status = "okay";
+};
+
+&v4l2vdma1 {
+	status = "okay";
+};
+
+&csi10in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&jaj_cam1_ep>;
+	clock-noncontinuous;
+};
+
+&i2c01 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	jaj_imx219_1: imx219@10 {
+		compatible = "sony,imx219";
+		reg = <0x10>;
+		status = "okay";
+
+		clocks = <&jaj_xclk1>;
+		clock-names = "xclk";
+
+		rotation = <180>;
+		orientation = <2>;
+
+		port@1 {
+			jaj_cam1_ep: endpoint@0 {
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <456000000>;
+				remote-endpoint = <&csi10in>;
+				clock-noncontinuous;
+			};
+		};
+	};
+};
+
+/* ---- Carrier buses / host bridges (re-assert stock SoM enables) --------- */
+
+&i2c02 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+&i2c52 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+&pcie0_rc {
+	status = "okay";
+};
+
+&pcie2_rc {
+	status = "okay";
+};
+
+/*
+ * PCIe RC3: TI TUSB73x0 SuperSpeed xHCI (dual USB-A + Type-C SS companion).
+ * Keep enabled; runtime PM is forced off by ark-jaj-usb-init.sh so the SS
+ * root hub is not autosuspended (was suspended ~100% of uptime otherwise).
+ */
+&pcie3_rc {
+	status = "okay";
+};
+
+&xgmac0 {
+	status = "okay";
+};
+
+&uart12 {
+	status = "okay";
 };

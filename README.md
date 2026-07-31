@@ -5,11 +5,14 @@ support for the [SiMa.ai Modalix](https://sima.ai) SoM.
 
 Depends on [`meta-simaai`](https://github.com/SiMa-ai/meta-simaai).
 
+Workflow mirrors [`ark_jetson_kernel`](https://github.com/ARK-Electronics/ark_jetson_kernel):
+`setup.sh` → `build.sh` → `flash.sh`.
+
 ## Supported machines
 
 | MACHINE       | Carrier                         | Status      |
 |---------------|---------------------------------|-------------|
-| `ark-jaj`     | ARK Just a Jetson               | Framework   |
+| `ark-jaj`     | ARK Just a Jetson               | DT overlay live (eLxr) |
 | `ark-pab`     | ARK Jetson PAB Carrier          | Framework   |
 | `ark-pab-v3`  | ARK Jetson PAB V3 Carrier       | Framework   |
 | `ark-can-pab` | ARK Jetson CAN PAB Carrier      | Framework   |
@@ -21,26 +24,37 @@ carrier-specific device-tree overlays via `ark-carrier-dtbo`.
 
 - Yocto / Poky **scarthgap** (same series as `meta-simaai`)
 - [`meta-simaai`](https://github.com/SiMa-ai/meta-simaai)
-- Other layers required by SiMa's build (see their `bblayers.conf.sample`)
+- Other layers required by SiMa's build (cloned by `setup.sh`)
 
-## Quick start
+## Quick start (Just a Jetson)
 
-1. Add this layer next to `meta-simaai` in your build tree.
-2. Extend `bblayers.conf`:
+Hardware: Modalix SoM on JAJ, 12 V power, USB-C debug (FTDI) to the host,
+optional Ethernet + M.2 SSD.
+
+```bash
+# 1. Host serial access
+sudo usermod -aG dialout $USER && newgrp dialout
+picocom -b 115200 /dev/ttyUSB0   # power-cycle board; watch U-Boot/Linux
+
+# 2. One-time Yocto workspace (~80+ GB free disk)
+SETUP_INSTALL_DEPS=1 ./setup.sh
+
+# 3. Build
+./build.sh ark-jaj
+
+# 4. Flash
+./flash.sh ark-jaj --netboot              # eMMC via sima-cli TFTP (recommended recovery)
+# or, host-attached disk only:
+./flash.sh ark-jaj --device /dev/sdX      # WIC write (NOT your host root disk)
+```
+
+Full bring-up notes: **[docs/bringup-jaj.md](docs/bringup-jaj.md)**.
+
+### Manual layer add (if not using setup.sh)
 
 ```
 BBLAYERS += "${TOPDIR}/../meta-ark-simaai"
-```
-
-3. Select a machine in `local.conf`:
-
-```
 MACHINE = "ark-jaj"
-```
-
-4. Build a SiMa image (once bring-up DTs are filled in):
-
-```
 bitbake simaai-image-minimal
 ```
 
@@ -49,6 +63,8 @@ See `conf/templates/ark/` for sample conf snippets.
 ## Layout
 
 ```
+setup.sh / build.sh / flash.sh   # ark_jetson_kernel-style entrypoints
+docs/bringup-jaj.md
 conf/
   layer.conf
   machine/
@@ -72,9 +88,12 @@ recipes-core/
 
 - Pin-compatible Modalix SoM drops into ARK Jetson carriers electrically.
 - Stock `modalix-som.dtb` is the default kernel DT until carrier DTs land.
-- Carrier placeholders live in `recipes-kernel/ark-carrier-dtbo/files/*.dtso`.
-- Replace / extend those overlays (and optionally add in-tree DTBs) during bring-up.
+- JAJ overlay: `recipes-kernel/ark-carrier-dtbo/files/ark-jaj.dtso` (identity + dual CSI IMX219).
+- Deploy live: `./scripts/deploy-jaj-dtbo.sh --reboot` (see `docs/bringup-jaj.md`).
+- Other carriers still use placeholder overlays under the same recipe.
 - U-Boot still uses the upstream Modalix board directory via `ARK_UBOOT_BOARD`.
+- Boot device is **on-SoM eMMC** by default; carrier NVMe is secondary storage
+  (unlike Jetson `flash.sh` defaulting to NVMe root).
 
 ## License
 

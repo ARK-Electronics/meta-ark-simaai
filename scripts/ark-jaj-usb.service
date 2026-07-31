@@ -1,0 +1,15 @@
+[Unit]
+Description=ARK JAJ USB-C FUSB301 dual-role + SuperSpeed host init
+After=local-fs.target sysinit.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ark-jaj-usb-init.sh
+RemainAfterExit=yes
+# Re-apply after late USB/PCI probe
+ExecStartPost=/bin/sleep 2
+ExecStartPost=/usr/local/sbin/ark-jaj-usb-init.sh
+
+[Install]
+WantedBy=multi-user.target

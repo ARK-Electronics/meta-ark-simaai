@@ -1,7 +1,13 @@
 # Sample BBLAYERS fragment for meta-ark-simaai
-# Merge into your build/conf/bblayers.conf (paths relative to build/ or absolute).
+# Prefer: run ../../setup.sh from this layer (or ./setup.sh from repo root),
+# which clones deps and patches build/conf/bblayers.conf.
+#
+# Manual merge into build/conf/bblayers.conf (paths relative to build/):
 
 # SiMa vendor layer (required)
 #  ${TOPDIR}/../meta-simaai \
 # ARK Modalix carrier BSP
 #  ${TOPDIR}/../meta-ark-simaai \
+#
+# Full layer list matches meta-simaai/conf/templates/custom/bblayers.conf.sample
+# plus meta-ark-simaai.
