@@ -2,21 +2,15 @@
 /*
  * ARK Just a Jetson (JAJ) carrier with SiMa.ai Modalix SoM
  *
- * Base DTB: modalix-som / modalix-som_16g (stock SoM)
- * Apply at U-Boot:
- *   setenv fdt_name modalix-som_16g.dtb
- *   setenv dtbos ark-jaj.dtbo
- *   saveenv
- *   boot
+ * Camera (schematic sheet 10 + Jetson connector sheets 5–7):
+ *   - Shared CAM_I2C → FSUSB42UMX mux (U11) → CAM0 / CAM1 @ 0x10
+ *   - CAM_MUX_SEL (J26B pin 130 / GPIO06) = port6 GPIO6  [SiMa dual-cam overlays]
+ *   - CAM0/CAM1 PWDN enables = port5 GPIO6 + GPIO7 held high
+ *   - J28 CAM0 2-lane: CSI1_D0/D1/CLK (D2/D3 = CSI0, 4-lane only)
+ *   - J25 CAM1 2-lane: CSI2_D0/D1/CLK (D2/D3 = CSI3, 4-lane only)
+ *   - Linux bus: i2c52 = i2c-4 = sio@5/i2c@0x04059000 (chip id 0x0219)
  *
- * Parallels ark_jetson_kernel products/JAJ:
- *   - Board model / compatible identity
- *   - Dual CSI IMX219 (cam0 on CSI0/i2c00, cam1 on CSI1/i2c01)
- *   - FUSB301 Type-C dual-role @ i2c00 0x25 (stock p3768 keeps this;
- *     ARK PAB deletes it — JAJ retains USB-C)
- *   - PCIe USB3 xHCI (TUSB73x0) on pcie3 for dual USB-A + Type-C SS path
- *
- * Runtime companion: scripts/ark-jaj-usb-init.sh (FUSB DRP + USB PM).
+ * USB-C: FUSB301 @ i2c00 0x25 (see ark-jaj-usb-init.sh for dual-role)
  */
 
 /dts-v1/;
@@ -44,92 +38,107 @@
 		compatible = "ark,just-a-jetson";
 		status = "okay";
 	};
-};
-
-/* ---- Camera 0: CSI0 + i2c00 + IMX219 ------------------------------------ */
-
-&csi0 {
-	status = "okay";
-};
-
-&axi_vdma0 {
-	status = "okay";
-};
-
-&mipi_dphy_rx0 {
-	status = "okay";
-};
-
-&v4l2video0 {
-	status = "okay";
-};
-
-&v4l2vdma0 {
-	status = "okay";
-};
-
-&csi00in {
-	clock-lanes = <0>;
-	data-lanes = <1 2>;
-	/* 2-lane IMX219: SiMa driver menu is 456 MHz (not 364, that is 4-lane) */
-	link-frequencies = /bits/ 64 <456000000>;
-	remote-endpoint = <&jaj_cam0_ep>;
-	clock-noncontinuous;
-};
-
-&i2c00 {
-	status = "okay";
-	clock-frequency = <400000>;
-	#address-cells = <1>;
-	#size-cells = <0>;
 
 	/*
-	 * ON Semiconductor FUSB301 Type-C controller (same 0x25 as Jetson
-	 * p3768 fusb301@25). Seen live on JAJ+Modalix at i2c-0 / i2c00.
-	 *
-	 * Stock eLxr builds TYPEC=y but not TYPEC_TCPM / FUSB drivers, so
-	 * dual-role is programmed from userspace (ark-jaj-usb-init.sh):
-	 *   MODES=DRP_ACC, host present current 1.5A, try source.
+	 * GPIO I2C mux for dual IMX219 (same address 0x10 on CAM_I2C).
+	 * Must be a root node with i2c-parent, not a child of i2c52.
 	 */
-	jaj_fusb301: fusb301@25 {
-		compatible = "fcs,fusb301", "onnn,fusb301";
-		reg = <0x25>;
-		status = "okay";
+	cam_i2cmux: i2cmux {
+		compatible = "i2c-mux-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		i2c-parent = <&i2c52>;
+		/* CAM_MUX_SEL: Jetson GPIO06 → Modalix port6 line 6 (SiMa dual-cam DT) */
+		mux-gpios = <&port6 6 0>;
+		idle-state = <0>;
 
-		/* Full dual-role connector description for when TCPM is enabled */
-		usb_con: connector {
-			compatible = "usb-c-connector";
-			label = "USB-C";
-			data-role = "dual";
-			power-role = "dual";
-			try-power-role = "source";
+		/* CAM0 — CSI1 / J28 (CSI1_D0/D1/CLK) */
+		i2c@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			jaj_imx219_0: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
+				status = "okay";
+				clocks = <&jaj_xclk0>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					jaj_cam0_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi10in>;
+						clock-noncontinuous;
+					};
+				};
+			};
 		};
-	};
 
-	jaj_imx219_0: imx219@10 {
-		compatible = "sony,imx219";
-		reg = <0x10>;
-		status = "okay";
+		/* CAM1 — CSI2 / J25 (CSI2_D0/D1/CLK) */
+		i2c@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
 
-		clocks = <&jaj_xclk0>;
-		clock-names = "xclk";
+			jaj_imx219_1: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
+				status = "okay";
+				clocks = <&jaj_xclk1>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
 
-		rotation = <180>;
-		orientation = <2>;
-
-		port@1 {
-			jaj_cam0_ep: endpoint@0 {
-				clock-lanes = <0>;
-				data-lanes = <1 2>;
-				link-frequencies = /bits/ 64 <456000000>;
-				remote-endpoint = <&csi00in>;
-				clock-noncontinuous;
+				port {
+					jaj_cam1_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi20in>;
+						clock-noncontinuous;
+					};
+				};
 			};
 		};
 	};
 };
 
-/* ---- Camera 1: CSI1 + i2c01 + IMX219 ------------------------------------ */
+/* ---- PWDN enables (port5); CAM_MUX_SEL is owned by i2c-mux-gpio on port6 ---- */
+
+&port5 {
+	/* Match SiMa dual-cam overlays: port5 GPIO6/7 = camera powerdown enables */
+	cam0-pwdn-en {
+		gpio-hog;
+		gpios = <6 0>;
+		output-high;
+		line-name = "cam0_pwdn";
+	};
+
+	cam1-pwdn-en {
+		gpio-hog;
+		gpios = <7 0>;
+		output-high;
+		line-name = "cam1_pwdn";
+	};
+};
+
+/* Parent bus for CAM_I2C (SoM → FSUSB42 mux → both cameras) */
+&i2c52 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+/* ---- CSI1 (CAM0/J28) + CSI2 (CAM1/J25) pipelines ---- */
+/* CSI0 unused on JAJ for dual IMX219 (no connector to CSI0 lanes). */
+
+&csi0 {
+	status = "disabled";
+};
 
 &csi1 {
 	status = "okay";
@@ -155,47 +164,69 @@
 	clock-lanes = <0>;
 	data-lanes = <1 2>;
 	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&jaj_cam0_ep>;
+	clock-noncontinuous;
+};
+
+&csi2 {
+	status = "okay";
+};
+
+&axi_vdma2 {
+	status = "okay";
+};
+
+&mipi_dphy_rx2 {
+	status = "okay";
+};
+
+&v4l2video2 {
+	status = "okay";
+};
+
+&v4l2vdma2 {
+	status = "okay";
+};
+
+&csi20in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
 	remote-endpoint = <&jaj_cam1_ep>;
 	clock-noncontinuous;
 };
 
-&i2c01 {
+/* ---- Remove old wrong sensors on i2c00/i2c01 if re-applied ---- */
+/* (fresh overlay replaces nodes only for targets we touch) */
+
+/* FUSB301 Type-C on i2c00 (USB2 debug FTDI is separate on SoM) */
+&i2c00 {
 	status = "okay";
 	clock-frequency = <400000>;
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	jaj_imx219_1: imx219@10 {
-		compatible = "sony,imx219";
-		reg = <0x10>;
+	jaj_fusb301: fusb301@25 {
+		compatible = "fcs,fusb301", "onnn,fusb301";
+		reg = <0x25>;
 		status = "okay";
 
-		clocks = <&jaj_xclk1>;
-		clock-names = "xclk";
-
-		rotation = <180>;
-		orientation = <2>;
-
-		port@1 {
-			jaj_cam1_ep: endpoint@0 {
-				clock-lanes = <0>;
-				data-lanes = <1 2>;
-				link-frequencies = /bits/ 64 <456000000>;
-				remote-endpoint = <&csi10in>;
-				clock-noncontinuous;
-			};
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "source";
 		};
 	};
 };
 
-/* ---- Carrier buses / host bridges (re-assert stock SoM enables) --------- */
-
-&i2c02 {
+&i2c01 {
 	status = "okay";
 	clock-frequency = <400000>;
 };
 
-&i2c52 {
+&i2c02 {
 	status = "okay";
 	clock-frequency = <400000>;
 };
@@ -208,11 +239,6 @@
 	status = "okay";
 };
 
-/*
- * PCIe RC3: TI TUSB73x0 SuperSpeed xHCI (dual USB-A + Type-C SS companion).
- * Keep enabled; runtime PM is forced off by ark-jaj-usb-init.sh so the SS
- * root hub is not autosuspended (was suspended ~100% of uptime otherwise).
- */
 &pcie3_rc {
 	status = "okay";
 };

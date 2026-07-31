@@ -1,50 +1,85 @@
 #!/bin/sh
 # ARK JAJ + Modalix: FUSB301 dual-role Type-C + USB SuperSpeed host bring-up
 #
-# FUSB301 @ i2c-0 0x25 (i2c00): stock chip comes up as SNK-only (MODES=0x04),
-# which breaks dual-mode USB-C. Reprogram DRP+ACC like Jetson JAJ host carriers.
+# FUSB301 @ i2c-0 0x25 (i2c00):
+#   Stock power-on often SNK-only; we program DRP+ACC for dual-role CC logic.
+#   Prefer host (SRC) for A-to-C sticks on USB-C; prefer device (SNK) when a
+#   remote host is already providing VBUS (PC cable).
 #
-# TUSB73x0 xHCI: keep SuperSpeed root hub (usb2) runtime-active; autosuspend
-# left the SS bus suspended and prevented SuperSpeed attach.
+# IMPORTANT — USB device *data* mode (gadget to PC):
+#   Stock Modalix eLxr has no USB gadget/UDC (# CONFIG_USB_GADGET is not set;
+#   only TUSB73x0 xHCI host). FUSB can sit in SNK for CC/VBUS, but the PC will
+#   not enumerate a gadget until SiMa ships a UDC + gadget-enabled kernel.
 #
-# Safe to run repeatedly (systemd oneshot + after hotplug rescan).
+# TUSB73x0: keep SuperSpeed root hub runtime-active (autosuspend broke SS).
 
 set -eu
 
 I2C_BUS="${I2C_BUS:-0}"
 FUSB_ADDR="${FUSB_ADDR:-0x25}"
+# prefer-host | prefer-device | auto
+# auto: if VBUS already present at init, force SNK (PC host); else DRP try-SRC
+ROLE_POLICY="${ROLE_POLICY:-auto}"
 
 log() { echo "ark-jaj-usb: $*"; }
-
-# --- FUSB301 (ON Semi) register map ---
-# 0x01 DEVICEID  0x12 = rev 1.2
-# 0x02 MODES     BIT4=DRP BIT5=DRP_ACC BIT0=SRC BIT2=SNK
-# 0x03 CONTROL   bits[2:1] host current (0/default/1.5A/3A), bit0 int-disable
-# 0x04 MANUAL    BIT2=UNATT_SRC BIT3=UNATT_SNK BIT1=DISABLED
-# 0x05 RESET     BIT0=SW_RESET
-# 0x11 STATUS    BIT0=ATTACH BIT3=VBUS_OK BIT4=CC1 BIT5=CC2
-# 0x12 TYPE      BIT3=SRC BIT4=SNK
 
 FUSB_REG_DEVICEID=0x01
 FUSB_REG_MODES=0x02
 FUSB_REG_CONTROL=0x03
 FUSB_REG_MANUAL=0x04
 FUSB_REG_RESET=0x05
+FUSB_REG_STATUS=0x11
+FUSB_REG_TYPE=0x12
 
 FUSB_MODE_DRP_ACC=0x20
 FUSB_MODE_DRP=0x10
 FUSB_MODE_SRC=0x01
-FUSB_CTRL_HOST_1500MA=0x04   # ints enabled, 1.5A host present
+FUSB_MODE_SNK=0x04
+FUSB_CTRL_HOST_1500MA=0x04
 FUSB_MANUAL_UNATT_SRC=0x04
+FUSB_MANUAL_UNATT_SNK=0x08
 
 fusb_present() {
 	command -v i2cget >/dev/null 2>&1 || return 1
 	id=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_DEVICEID" 2>/dev/null || true)
-	# FUSB301 rev 1.0/1.1/1.2 => 0x10/0x11/0x12
 	case "$id" in
 		0x10|0x11|0x12) return 0 ;;
 		*) return 1 ;;
 	esac
+}
+
+fusb_decode() {
+	stat=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_STATUS" 2>/dev/null || echo 0x00)
+	typ=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_TYPE" 2>/dev/null || echo 0x00)
+	modes=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MODES" 2>/dev/null || echo 0x00)
+	# shell arithmetic needs decimal
+	s=$(printf "%d" "$stat")
+	t=$(printf "%d" "$typ")
+	attach=$((s & 1))
+	vbus=$(( (s >> 3) & 1 ))
+	cc1=$(( (s >> 4) & 1 ))
+	cc2=$(( (s >> 5) & 1 ))
+	is_snk=$(( (t >> 4) & 1 ))
+	is_src=$(( (t >> 3) & 1 ))
+	if [ "$is_snk" -eq 1 ]; then
+		role="DEVICE/SINK"
+	elif [ "$is_src" -eq 1 ]; then
+		role="HOST/SOURCE"
+	else
+		role="DETACHED"
+	fi
+	log "FUSB status=$stat type=$typ modes=$modes attach=$attach vbus=$vbus cc1=$cc1 cc2=$cc2 role=$role"
+}
+
+fusb_program() {
+	mode="$1"
+	manual="$2"
+	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_RESET" 0x01 || true
+	sleep 0.05
+	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_CONTROL" "$FUSB_CTRL_HOST_1500MA"
+	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MODES" "$mode"
+	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MANUAL" "$manual" || true
+	sleep 0.15
 }
 
 fusb_init_dual_role() {
@@ -54,32 +89,51 @@ fusb_init_dual_role() {
 	fi
 
 	id=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_DEVICEID")
-	modes_before=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MODES")
-	log "FUSB301 id=$id modes_before=$modes_before"
+	log "FUSB301 id=$id policy=$ROLE_POLICY"
+	fusb_decode
 
-	# Soft reset then dual-role (DRP + accessory), host-try
-	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_RESET" 0x01 || true
-	sleep 0.05
-	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_CONTROL" "$FUSB_CTRL_HOST_1500MA"
-	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MODES" "$FUSB_MODE_DRP_ACC"
-	# Prefer source/host when toggling dual-role
-	i2cset -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MANUAL" "$FUSB_MANUAL_UNATT_SRC" || true
-	sleep 0.1
+	stat=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_STATUS")
+	s=$(printf "%d" "$stat")
+	vbus=$(( (s >> 3) & 1 ))
+	attach=$((s & 1 ))
 
-	modes=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_MODES")
-	ctrl=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" "$FUSB_REG_CONTROL")
-	stat=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" 0x11 2>/dev/null || echo "?")
-	typ=$(i2cget -y "$I2C_BUS" "$FUSB_ADDR" 0x12 2>/dev/null || echo "?")
-	log "FUSB301 dual-role OK modes=$modes control=$ctrl status=$stat type=$typ"
+	case "$ROLE_POLICY" in
+		prefer-device|device|snk)
+			log "forcing SNK (device/sink) for dual-role device preference"
+			fusb_program "$FUSB_MODE_SNK" "$FUSB_MANUAL_UNATT_SNK"
+			;;
+		prefer-host|host|src)
+			log "forcing DRP try-SRC (host preference)"
+			fusb_program "$FUSB_MODE_DRP_ACC" "$FUSB_MANUAL_UNATT_SRC"
+			;;
+		auto|*)
+			# External host already providing VBUS → prefer sink/device CC role
+			if [ "$vbus" -eq 1 ] && [ "$attach" -eq 1 ]; then
+				log "VBUS present at attach — programming SNK (device CC role)"
+				fusb_program "$FUSB_MODE_SNK" "$FUSB_MANUAL_UNATT_SNK"
+			else
+				log "no external host VBUS — DRP try-SRC (host for sticks on C)"
+				fusb_program "$FUSB_MODE_DRP_ACC" "$FUSB_MANUAL_UNATT_SRC"
+			fi
+			;;
+	esac
+
+	fusb_decode
+
+	# Gadget / UDC capability report (device *data* path)
+	if [ -d /sys/class/udc ] && [ -n "$(ls -A /sys/class/udc 2>/dev/null || true)" ]; then
+		log "UDC present: $(ls /sys/class/udc | tr '\n' ' ') — gadget possible"
+	else
+		log "WARNING: no UDC (/sys/class/udc empty). CC dual-role can be SNK but"
+		log "WARNING: PC will not enumerate a USB gadget (kernel has no USB device controller)."
+	fi
 }
 
 usb_ss_power_on() {
-	# Global: do not autosuspend USB devices after 2s idle
 	if [ -w /sys/module/usbcore/parameters/autosuspend ]; then
 		echo -1 > /sys/module/usbcore/parameters/autosuspend || true
 	fi
 
-	# SuperSpeed + HS root hubs and the TUSB73x0 PCI function
 	for path in \
 		/sys/bus/usb/devices/usb1/power/control \
 		/sys/bus/usb/devices/usb2/power/control \
@@ -91,7 +145,6 @@ usb_ss_power_on() {
 		fi
 	done
 
-	# Disable per-device autosuspend delay under both root hubs
 	for d in /sys/bus/usb/devices/usb1 /sys/bus/usb/devices/usb2 \
 		 /sys/bus/usb/devices/1-* /sys/bus/usb/devices/2-*; do
 		[ -d "$d/power" ] || continue
