@@ -1,0 +1,15 @@
+# Sample local.conf fragment for ARK Modalix carriers
+#
+# MACHINE choices:
+#   ark-jaj      - ARK Just a Jetson
+#   ark-pab      - ARK Jetson PAB
+#   ark-pab-v3   - ARK Jetson PAB V3
+#   ark-can-pab  - ARK Jetson CAN PAB
+
+MACHINE ??= "ark-jaj"
+
+# Accept SiMa commercial license flags (required by meta-simaai images)
+LICENSE_FLAGS_ACCEPTED += "commercial"
+
+# Optional: override serial baud
+# BAUDRATE = "115200"

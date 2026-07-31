@@ -1,0 +1,27 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Placeholder overlay: ARK Jetson PAB
+ *
+ * Applied at runtime via U-Boot:
+ *   setenv dtbos ark-pab.dtbo ; saveenv ; boot
+ *
+ * Replace fragments with real pinmux / CSI / I2C / PCIe / GPIO nodes
+ * during hardware bring-up. Compatible string should match the base DTB.
+ */
+
+/ {
+	compatible = "simaai,modalix";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			ark_pab {
+				compatible = "ark,jetson-pab";
+				status = "okay";
+				/* TODO: carrier peripherals (INA238, IMU, CAN, CSI, ...) */
+			};
+		};
+	};
+};

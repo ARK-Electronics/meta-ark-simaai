@@ -1,0 +1,7 @@
+# Sample BBLAYERS fragment for meta-ark-simaai
+# Merge into your build/conf/bblayers.conf (paths relative to build/ or absolute).
+
+# SiMa vendor layer (required)
+#  ${TOPDIR}/../meta-simaai \
+# ARK Modalix carrier BSP
+#  ${TOPDIR}/../meta-ark-simaai \
