@@ -303,6 +303,32 @@ You may need `dialout` (`newgrp dialout` or re-login after `usermod -aG dialout 
 | Linux serial console | Often carrier **UART2** | **UART1** via SoM **USB-C** FTDI |
 | Carrier generic UART | — | **UART0** → `/dev/ttyS1` (verified TX/RX) |
 | JAJ silk “UART2” | Linux debug (typical) | **tRoot only** on Modalix |
+| CAN | SoM CAN → JAJ TJA1051 | **No CAN on Modalix SoM** (see below) |
+
+### CAN (JAJ transceiver vs Modalix SoM)
+
+**Modalix SoM has no CAN / CAN-FD controller** and does not list CAN among gold-finger
+interfaces (005-HW-32: PCIe, GbE, CSI, USB, HDMI, UART, SPI, I2C, GPIO only).
+
+**Just a Jetson** still has a **Jetson CAN** path: **TJA1051** transceiver to the CAN
+connector (e.g. J15), with digital side:
+
+| TJA1051 | JAJ net | SODIMM pin (Jetson) | Modalix SoM (005-HW-32) |
+|---------|---------|---------------------|-------------------------|
+| TxD | `JCAN_TX` / `CAN_TX` | **145** | **N/A** (not connected) |
+| RxD | `JCAN_RX` / `CAN_RX` | **143** | **N/A** (not connected) |
+
+With a **Jetson** SoM those balls are real CAN (or muxable) pins, so the on-board PHY works.
+With **Modalix**, pins **143/145 are unused** — the transceiver TxD/RxD have **nothing on the
+module** to drive them.
+
+**GPIO bit-bang through the stock JAJ TJA1051 is not possible** without rework (no SoC pad on
+those nets). Soft bit-bang CAN on arbitrary GPIOs is also a poor fit for Linux at typical bit
+rates even if you jumpered the PHY to free GPIOs.
+
+**Practical options on JAJ + Modalix:** USB–CAN adapter; SPI CAN controller (e.g. MCP2515/2518)
+on a free SPI + IRQ GPIO; or hardware mod of TJA1051 TxD/RxD to available Modalix GPIOs (still
+prefer a real controller over bit-bang).
 
 ## Troubleshooting
 
@@ -317,3 +343,4 @@ You may need `dialout` (`newgrp dialout` or re-login after `usermod -aG dialout 
 | No Linux shell on JAJ “UART2” | Expected on Modalix — that header is **tRoot**, use USB-C (UART1) or UART0 |
 | UART1 J6 TX stuck high (Modalix) | SoC TX is on **USB-C**; J6 path not carrying Modalix UART1 TX (pinmux OK; carrier OK with Jetson on its console port) |
 | UART0 works without FC, fails with `crtscts` | Expected — RTS/CTS not pinmuxed; use **`-crtscts`** |
+| JAJ CAN connector silent on Modalix | Expected — SoM pins 143/145 **N/A**; TJA1051 not driven; use USB/SPI CAN |
