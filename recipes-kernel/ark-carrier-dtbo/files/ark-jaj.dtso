@@ -10,6 +10,13 @@
  *   - J25 CAM1 2-lane: CSI2_D0/D1/CLK (D2/D3 = CSI3, 4-lane only)
  *   - Linux bus: i2c52 = i2c-4 = sio@5/i2c@0x04059000 (chip id 0x0219)
  *
+ * UART (Modalix gold finger vs Jetson roles — see docs/bringup-jaj.md):
+ *   - UART1 (SODIMM 203/205, SIO1[4]/[5], DT uart12 → ttyS0): generic app UART.
+ *     Same net as on-module FTDI (SoM USB-C debug). TX/RX only (no RTS/CTS pinmux).
+ *   - UART0 (SODIMM 99/101, SIO4[5]/[4], DT uart42 → typically ttyS1): optional
+ *     second UART / serial console if you free UART1 from console=ttyS0.
+ *   - UART_B (SODIMM 236/238, JAJ silk “UART2”): tRoot only, not a Linux tty.
+ *
  * USB-C: FUSB301 @ i2c00 0x25 (see ark-jaj-usb-init.sh for dual-role)
  */
 
@@ -247,6 +254,22 @@
 	status = "okay";
 };
 
+/*
+ * UART1 — generic (application) serial.
+ * SoC: uart12 @ 0x0401a000, pinctrl uart2_group = SIO1 pins 4–5 (TX/RX only).
+ * Electrically shared with SoM on-module FTDI (USB-C). Stock images also use this
+ * as console=ttyS0; move console to UART0 (uart42) or drop serial console to use
+ * exclusively from userspace (see docs/bringup-jaj.md).
+ */
 &uart12 {
+	status = "okay";
+};
+
+/*
+ * UART0 — second general-purpose UART on JAJ (header near UART0 silk / 3.3 V side).
+ * SoC: uart42 @ 0x0404a000, SIO4 pins 4–5. Enable for console=ttyS1 when UART1
+ * is reserved for an application.
+ */
+&uart42 {
 	status = "okay";
 };
