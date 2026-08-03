@@ -11,6 +11,12 @@
 #   ./uart1-tx-probe.sh mux carrier       # drive usb_uart12 low
 #   ./uart1-tx-probe.sh mux usb           # drive usb_uart12 high (stock SoM default)
 #
+# HAZARD: do not flood a Modalix UART at wire speed. Sustained unpaced 0x55 on
+# UART0 (/dev/ttyS1) correlated with a hard board hang -- Ethernet, SSH and the
+# USB-C console all went away, and the next boots were ~30 s with an unclean FAT.
+# "spam" is therefore paced (64 B / 100 ms) and capped at 60 s. Light printf tests
+# are the safe default; reach for spam only when you need a scope trigger.
+#
 # WARNING: UART1 is the console on stock images.
 #   - "mux carrier" is a DEAD END on JAJ: measured, it disables the on-module
 #     FTDI (USB device disconnects) and puts nothing on the carrier. Kept only
@@ -160,17 +166,21 @@ cmd_mux() {
 }
 
 cmd_spam() {
-	secs="${1:-30}"
+	secs="${1:-20}"
 	[ -c "$UART_DEV" ] || die "$UART_DEV is not a character device"
+	[ "$secs" -le 60 ] 2>/dev/null || die "refusing ${secs}s; keep bursts <= 60s (see hazard note)"
 	stty -F "$UART_DEV" 115200 cs8 -cstopb -parenb -crtscts raw
-	echo "Transmitting 0x55 on $UART_DEV for ${secs}s."
+	echo "Transmitting paced 0x55 bursts on $UART_DEV for ${secs}s."
 	echo "0x55 at 8N1 is an alternating bit pattern -- a clean 57.6 kHz square wave"
-	echo "at 115200 baud. Scope SODIMM 203 *and* 205 (JAJ J6 TX and RX)."
+	echo "at 115200 baud, easy to trigger on. Scope both connector data pins."
 	end=$(( $(cut -d. -f1 /proc/uptime) + secs ))
-	# single open() for the whole burst, so the line stays keyed up
+	# PACED, not wire-speed. An unpaced flood on ttyS1/UART0 correlated with a hard
+	# board hang (eth + SSH + USB-C all gone, unclean FAT on reboot). A 64-byte
+	# burst every 100 ms is ~5% duty -- plenty of edges to scope, no sustained load.
 	while [ "$(cut -d. -f1 /proc/uptime)" -lt "$end" ]; do
-		printf 'UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU'
-	done > "$UART_DEV"
+		printf 'UUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU' > "$UART_DEV"
+		sleep 0.1
+	done
 	echo "done"
 }
 
