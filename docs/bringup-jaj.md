@@ -370,6 +370,36 @@ rails and EN on this carrier (`rx` counted 54 bytes from J5). If step 2 fails an
 the carrier intact up to the gold finger, then the module does not route SODIMM 203/205/207/209
 and the UART1 header is genuinely unavailable — mark it N/A the way Key E PCIe and CAN are.
 
+##### Ruled out on hardware (software levers are exhausted)
+
+Every software control that could plausibly gate the header has now been toggled, with
+detection on **all four** J6 pins in **both** directions (`uart12` + `uart13`), at 115200 and
+9600. None of them changes anything:
+
+| Lever | States tried | J6 result |
+|-------|--------------|-----------|
+| `usb_uart12` (SIO1 line 2) | HIGH (stock) and LOW | dead in both |
+| `USB0_VBUS_DETn` = SODIMM 87 (SoM `GPIO00_VBUS_DET`) | driven LOW, and released/floating | dead in both |
+| Pinmux | `uart2_group` on pins 4/5, `uart3_group` on 6/7, both confirmed claimed | dead |
+| Baud | 115200 and 9600 | dead |
+
+The `usb_uart12` retest matters because the original refutation scoped **J6 pin 2**, which is
+the SoC's *RX* under the reversed pair — the wrong pin to watch. Retested properly with the
+adapter and the `rx` counters on both pins: it still does nothing. The DTS naming is suggestive
+(`usb-hog`/`output-high` for `usb_uart12` on SIO1 versus `uart-hog`/`output-low` for
+`usb_uart60` on SIO6, which reads exactly like a USB-vs-UART select), but on this carrier
+toggling it has no effect on the header either way.
+
+**Worth knowing even though it is not the UART fault:** JAJ drives `USB0_VBUS_DETn` (SODIMM 87)
+from the FUSB301's **open-drain INT_N**, and **R70 — the 47 kΩ pull-up to 1V8 — is DNP in the
+Production variant**. Nothing else pulls that net. Since no Linux driver services the FUSB301
+interrupt, `INTERRUPT` (0x13) latches (measured `0x07`, with `MASK` = 0x00 and global
+`INT_MASK` clear) and INT_N therefore sits **driven LOW indefinitely after boot** — so SODIMM 87
+reads asserted by accident, not by design, and floats undriven the moment anything clears that
+register. JAJ names the net active-low (`..._DETn`) while the SoM names the pin active-high
+(`GPIO00_VBUS_DET`), so the polarity is worth confirming before anything is made to depend on
+it. Reading register 0x13 is enough to change the pin's state.
+
 ##### The fix
 
 J6 is a 6-pin JST GH (BM06B-GHS-TBT): **1 = 5 V, 2 = UART1_TXD_3V3, 3 = UART1_RXD_3V3,
