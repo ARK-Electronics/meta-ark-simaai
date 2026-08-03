@@ -353,10 +353,20 @@ pair alone no longer explains the failure: there is an open as well.
 
 Localise it cheapest-first — each step is under a minute:
 
-1. **Validate the adapter and its wires.** Touch the adapter's TX and RX wire ends together,
-   off the board, and loop back at the host. Proves the adapter, the crimps and the jumpers in
-   one shot; this is the most likely culprit and the easiest to miss.
-   Also confirm the breakout's logic jumper is on **3.3 V**, not 5 V.
+1. **Re-establish the control: move the adapter to J5 (UART0).** One move validates the
+   adapter, the crimps, the jumper wires, the host harness, U10's translator **and** the
+   carrier's 1V8 rail, against a port already known to work as labelled — no swap or pull-up
+   needed there:
+
+   ```bash
+   ./scripts/uart1-j6-linktest.py --dev /dev/ttyS1 --bauds 115200
+   ```
+
+   UART0 passing narrows the fault to the UART1 nets or the module. UART0 failing too means the
+   adapter/wiring or U10/1V8 is at fault and nothing UART1-specific applies yet. Do this first:
+   the only evidence that U10 passes anything is a stale `rx:54` counter from an earlier
+   session, and it does not survive a reboot. Also confirm the breakout's logic jumper is on
+   **3.3 V**, not 5 V.
 2. **Loopback at the connector.** Jumper J6 pin 2 to pin 3 and run
    `sudo ./uart1-tx-probe.sh loopback` on the board. This bypasses the adapter entirely.
    An echo proves the module *does* route UART1 to the gold finger and U10 passes it, which
