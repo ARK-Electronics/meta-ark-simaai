@@ -200,14 +200,16 @@ Table 2-3 / Chapter 3 pin listing (PCIE0 x4, PCIE2 x2; pins ~167–175 = ETH1 / 
 
 SiMa (bring-up guide): on **Jetson**, Linux console is typically **UART2**; on **Modalix SoM
 Rev2**, Linux/U-Boot console is **UART1**, and **UART_B** is tRoot only. The SoM still
-exposes three UARTs on the gold finger (005-HW-32 Table 2-9).
+exposes three UARTs on the gold finger (005-HW-32 Table 2-9) — plus, on the UART1 RTS/CTS
+pins, a fourth usable port (`uart13`, see below).
 
 #### Ports
 
 | SoM name | SODIMM | SoC pinmux | DT / Linux | JAJ connector | Verified (JAJ + Modalix) |
 |----------|--------|------------|------------|---------------|---------------------------|
 | **UART0** | 99 TX / 101 RX (RTS# 103, CTS# 105) | SIO4 pins 4–5, `uart2_group`, **`uart42`** @ `0x0404a000` | **`/dev/ttyS1`** | UART0 header (3.3 V, TX/RX/RTS/CTS) | **TX+RX work** @ 115200, no FC. **HW flow control does not work** (RTS/CTS not pinmuxed). |
-| **UART1** | 203 TX / 205 RX (RTS# 207, CTS# 209) | SIO1 pins 4–5, `uart2_group`, **`uart12`** @ `0x0401a000` | **`/dev/ttyS0`** (stock console) | **SoM USB-C FTDI** + JAJ **J6** (3.3 V) | **USB-C: TX works** (console / spam). **J6 TX stuck idle high** with Modalix (SoC TX does not appear on carrier 3.3 V). **J6 header dead both ways** (TX and RX) with a known-good FTDI — see [UART1 TX not reaching the carrier](#uart1-tx-not-reaching-the-carrier). Same JAJ carrier is fine with Jetson on *its* debug UART (often UART2). |
+| **UART1** | 203 / 205 — **reversed vs the labels**, see below | SIO1 pins 4–5, `uart2_group`, **`uart12`** @ `0x0401a000` | **`/dev/ttyS0`** (stock console) | **SoM USB-C FTDI** + JAJ **J6** pins 2/3 (3.3 V) | **USB-C: works.** **J6 works after swapping the two data wires and adding a 3V3 pull-up on pin 3** — the pair is reversed on the gold finger and JAJ's translator is direction-committed. See [Getting UART1 out of the J6 header](#getting-uart1-out-of-the-j6-header). |
+| **UART1 RTS/CTS pins** | 207 / 209 | SIO1 pins 6–7, `uart3_group`, **`uart13`** @ `0x0401c000` | **`/dev/ttyS2`** | JAJ **J6** pins 5/4 (3.3 V) | **A second UART on the same J6 header**, enabled by `ark-jaj.dtbo`. No console, no getty, and not shared with the on-module FTDI. Flow control was never possible on these pins, so they were dead weight. |
 | **UART_B** | 236 TX / 238 RX | tRoot (not APU `ttyS*`) | *(no Linux tty)* | JAJ silk **“UART2”** | **tRoot** interactive (`TROOT:>`, help, etc.) @ 115200. |
 
 #### Pinmux (software)
@@ -232,32 +234,156 @@ cat /sys/kernel/debug/pinctrl/4040000.pinmux-simaai-sio-pinctrl/pinmux-pins
 ```
 
 **RTS/CTS** appear on the gold finger and JAJ headers but are **not** part of these 2-pin
-UART groups in the current kernel DT. Enabling `crtscts` does **not** give working hardware
-flow control (CTS stays false on the peer). Use **TX/RX only**.
+UART groups — a SIO UART group is only ever 2 pins wide, so the controller has no RTS/CTS
+to put there. Enabling `crtscts` does **not** give working hardware flow control (CTS stays
+false on the peer). Use **TX/RX only**.
 
-`ark-jaj.dtbo` enables **`uart12`** (UART1) and **`uart42`** (UART0).
+That also means the UART1 RTS/CTS pins are free for something better: **SIO1 pins 6–7 are
+`uart3_group` = `uart13`**, a whole second UART, and JAJ already wires those two pins to
+**J6 pins 5 and 4**.
 
-#### UART1 TX not reaching the carrier
+`ark-jaj.dtbo` enables **`uart12`** (UART1), **`uart42`** (UART0) and **`uart13`** (second
+UART on the J6 header), and pins the numbering with `serialN` aliases so that
+**ttyS0 = uart12, ttyS1 = uart42, ttyS2 = uart13**. The aliases are not cosmetic: `uart13`
+probes before `uart42` (lower SIO block), so without them UART0 would have moved to
+`/dev/ttyS2` and every `console=ttyS1` reference here would have pointed at the wrong port.
 
-**Status: the JAJ UART1 header (JST-GH / J6) is dead in both directions on Modalix.
-Use UART0 instead.** This section is the evidence trail, not a fix.
+#### Getting UART1 out of the J6 header
 
-| Path | Result |
-|------|--------|
-| UART1 header **TX** | **FAIL** — host reads 0 bytes; scope shows flat 3.3 V, no edges |
-| UART1 header **RX** | **FAIL** — board never sees host markers |
-| UART1 via SoM USB-C (`ttyS0` → FT230X) | **works** — console + test patterns |
-| Pinmux | correct — SIO1 pins 4/5 = `uart2_group` / `401a000.uart` |
+**Status: fixable on the bench — swap the two data wires at J6 and add one pull-up.**
+Nothing on the module is broken, and no device-tree change reaches any of it. Two things go
+wrong and they compound.
 
-The same FTDI adapter passes on the UART0 header and fails on UART1, so it is not a
-faulty adapter. The SoC's UART1 TX is fine, the pinmux is right, and no software is
-holding the line — **the break is between the SoC pads and the carrier connector**,
-and it is not something a device tree change can reach.
+##### 1. The UART1 pair is reversed on the gold finger
 
-##### 1. ~~The `usb_uart12` line routes UART1 to the carrier~~ — REFUTED on hardware
+Every SIO UART group is **even pin = RX, odd pin = TX**. SiMa's bring-up guide gives the pin
+math outright (§3.3.2.2: *“Index 2 will map to output port 4 and 5”*) and its Table 2 shows
+the direction on every UART pair it documents — `SIO0[0]`=RX/`[1]`=TX, `SIO2[4]`=RX/`[5]`=TX,
+`SIO2[6]`=RX/`[7]`=TX, `SIO5[2]`=RX/`[3]`=TX, `SIO5[4]`=RX/`[5]`=TX. The pinctrl driver agrees:
+in `pinctrl-simaai-sio.c` only the **upper** pin of each pair is output-enabled
+(`pcsimaai_uartoe` shifted by the pair index).
 
-`modalix-som.dts` hogs a GPIO in **SIO block 1** — the same block that hosts `uart12` —
-and names it after the UART, which made it look like a module-side routing mux:
+Now compare the SoM data sheet (005-HW-32 Table 2-9):
+
+| SODIMM | DS signal name | DS SIO column | even=RX / odd=TX says | consistent? |
+|--------|----------------|---------------|------------------------|-------------|
+| 99 | UART0_TXD | SIO4**[5]** | TX | ✅ |
+| 101 | UART0_RXD | SIO4**[4]** | RX | ✅ |
+| 203 | UART1_TXD | SIO1**[4]** | **RX** | ❌ |
+| 205 | UART1_RXD | SIO1**[5]** | **TX** | ❌ |
+
+UART0's rows agree with themselves — and UART0 works exactly as labelled on JAJ. UART1's two
+rows contradict each other, and UART1 is the one that fails. The pair is reversed:
+
+- SODIMM **203** (JAJ `UART1_TXD_3V3`, **J6 pin 2**) is the SoC's **RX**
+- SODIMM **205** (JAJ `UART1_RXD_3V3`, **J6 pin 3**) is the SoC's **TX**
+
+Failing in *both* directions is what this predicts rather than evidence against it. A
+conventionally wired adapter puts host TX onto the SoC's TX pad (contention, the board hears
+nothing) and listens on the SoC's RX pad (nothing to read). Both directions go quiet with a
+perfectly good adapter, which is why “the same FTDI works on UART0” only proves the adapter.
+
+##### 2. JAJ's translator is direction-committed (LSF0108 pass-FET)
+
+Schematic sheet 9, *Jetson GPIO Connectors 2*: both carrier UARTs cross **U10 =
+LSF0108RKSR**, an 8-bit **passive pass-FET** translator — one NMOS per channel, no output
+drivers. It cannot source a high; the high level must come from a pull-up on whichever side
+is receiving. JAJ fits **one 604 Ω pull-up per channel, on the receiving side**, chosen from
+the *Jetson* direction:
+
+| U10 channel | JAJ net | Header pin | 1V8 side (A) | 3V3 side (B) | can up-shift |
+|-------------|---------|-----------|--------------|--------------|--------------|
+| A5/B5 | UART0_TXD | J5 pin 2 | — | **R57** | module → header ✅ |
+| A6/B6 | UART0_RXD | J5 pin 3 | **R53** | — | header → module ✅ |
+| A8/B8 | UART0_RTS | J5 pin 5 | — | **R58** | module → header |
+| A7/B7 | UART0_CTS | J5 pin 4 | **R54** | — | header → module |
+| A1/B1 | UART1_TXD | **J6 pin 2** | — | **R59** | module → header |
+| A2/B2 | UART1_RXD | **J6 pin 3** | **R55** | — | header → module |
+| A4/B4 | UART1_RTS | **J6 pin 5** | — | **R60** | module → header |
+| A3/B3 | UART1_CTS | **J6 pin 4** | **R56** | — | header → module |
+
+Because finding 1 reverses the pair, the SoC's TX comes out on **J6 pin 3** — the one net
+whose pull-up sits on the 1.8 V side. The FET passes lows normally, but on a mark it pinches
+off near Vref_A, so pin 3 tops out around **1.8 V** — below an FT232R's V_IH of 2.0 V. Hence:
+
+- **host → board** works as soon as the wires are swapped. That channel (A1/B1) has no
+  1.8 V pull-up on the SoC's RX pad and does not need one: a push-pull host both sinks and
+  sources through the FET, and R59 on the 3V3 side holds the mark. Down-shifting is the easy
+  direction — the pad only has to reach ~1.8 V, which is already a valid high for it.
+- **board → host** stays broken until J6 pin 3 gets a 3.3 V pull-up.
+
+A useful tell: an FTDI input has its own weak (≈200 kΩ) internal pull-up, which is far too slow
+at 115200 but can be enough at **9600**. If a swapped link passes traffic at 9600 and fails at
+115200, the missing pull-up is exactly what you are looking at.
+
+U10 itself is exonerated — UART0 runs through the same package, the same 1V8/3V3 rails and the
+same EN, so Vref and EN are good. Nothing else sits on the four UART1 3V3 nets except U10,
+R59/R60, the D18 TVS array and J6: there is no carrier USB-serial bridge to contend with.
+
+##### The fix
+
+J6 is a 6-pin JST GH (BM06B-GHS-TBT): **1 = 5 V, 2 = UART1_TXD_3V3, 3 = UART1_RXD_3V3,
+4 = CTS, 5 = RTS, 6 = GND.**
+
+```text
+host GND ---------------------------------- J6 pin 6
+host TX  ---------------------------------- J6 pin 2   <- the pin silkscreened TX
+host RX  ---------------------------------- J6 pin 3   <- the pin silkscreened RX
+                     |
+                     +--[ 1k ]--- adapter 3V3          <- the missing pull-up
+```
+
+1. **Swap the two data wires** relative to the usual convention: host TX to the pin labelled
+   TX, host RX to the pin labelled RX.
+2. **Add a pull-up on J6 pin 3**, 604 Ω–2.2 kΩ to **3.3 V**. A flying resistor to the adapter's
+   3V3 output is enough for the bench; the board-side equivalent is a second R59 fitted from
+   `UART1_RXD_3V3` to 3V3.
+   **Do not pull up to J6 pin 1** — that is 5 V, above the translator's Vref_B and the adapter's
+   input rating.
+3. Leave `usb_uart12` **HIGH** (stock). It is the on-module USB-bridge enable, not a routing
+   select — see the refutation below.
+4. Nothing to change in the device tree; `uart12` is already enabled and correctly muxed.
+
+Then, over SSH (UART1 is the console, so do not test from the port you are disturbing):
+
+```bash
+sudo ./scripts/uart1-tx-probe.sh report          # counters + pinmux + console owner
+sudo ./scripts/uart1-tx-probe.sh tx              # light paced printf on ttyS0
+sudo ./scripts/uart1-tx-probe.sh rx 20           # listen; drive the header from the host
+```
+
+The fastest read on progress is the byte counters, no scope required:
+
+```bash
+cat /proc/tty/driver/serial
+# 0: uart:16550A mmio:0x0401A000 ... tx:20303 rx:0     <- rx:0 = nothing has ever reached
+#                                                          the SoC's UART1 RX pad
+```
+
+`rx` climbing off zero is proof the host→board direction is fixed; bytes arriving at the host
+prove board→host.
+
+##### Alternative with no resistor: use `uart13` on J6 pins 5/4
+
+`ark-jaj.dtbo` also enables **`uart13`** (SIO1 pins 6–7 → SODIMM 207/209 → **J6 pin 5 and
+pin 4**) as **`/dev/ttyS2`**. Those pins can never carry flow control, so nothing is lost, and
+this port is cleaner than `uart12` for an application: no console, no getty, and no on-module
+FT230X sharing the net.
+
+The same even=RX/odd=TX rule applies, so one of the two is the SoC's TX. **If it lands on J6
+pin 5, no added pull-up is needed at all** — R60 is already on the 3V3 side of that net. If it
+lands on pin 4, that net needs the same pull-up treatment as pin 3. Determine it empirically:
+
+```bash
+stty -F /dev/ttyS2 115200 cs8 -cstopb -parenb -crtscts raw
+printf 'TTYS2_ON_J6\r\n' > /dev/ttyS2      # host RX on J6 pin 5, then retry on pin 4
+```
+
+##### What is already ruled out
+
+**`usb_uart12` does not route UART1 to the carrier — REFUTED on hardware.**
+`modalix-som.dts` hogs a GPIO in SIO block 1 — the same block that hosts `uart12` — and names
+it after the UART, which made it look like a module-side routing mux:
 
 ```dts
 &port1 {                          /* port1 = gpio10 @ 0x04011000 = SIO1's GPIO bank */
@@ -271,135 +397,51 @@ and names it after the UART, which made it look like a module-side routing mux:
 };
 ```
 
-It is not. Measured on JAJ + Modalix with 0x55 spam running continuously:
+It is not. Measured on JAJ + Modalix with 0x55 running continuously:
 
 | `usb_uart12` | SoM USB serial | JAJ UART1 connector |
 |---|---|---|
-| **HIGH** (stock) | full 0x55 spam ✅ | 3.3 V idle, no edges |
-| **LOW** | **FTDI drops off USB** | 3.3 V idle, no edges |
+| **HIGH** (stock) | full 0x55 spam ✅ | 3.3 V idle, no edges |
+| **LOW** | **FTDI drops off USB** | 3.3 V idle, no edges |
 | HIGH (restored) | 0x55 again ✅ | still silent |
 
-So `usb_uart12` is an **enable/reset for the on-module USB-serial bridge**, not a
-routing select — driving it low disables the bridge and puts nothing on the gold
-finger. **Leave it HIGH.** `uart1-tx-probe.sh mux carrier` is kept only for
-characterising the line; there is no overlay for it, deliberately.
+So it is an **enable/reset for the on-module USB-serial bridge**, not a routing select.
+**Leave it HIGH.** `uart1-tx-probe.sh mux carrier` is kept only for characterising the line.
 
-##### 2. UART1 TX/RX look crossed on the gold finger — **open; cheapest test left**
-
-The pinctrl driver settles which pin of a UART pair is the output. In
-`drivers/pinctrl/pinctrl-simaai-sio.c`:
-
-```c
-static const u32 uart2_pins[] = { 4, 5 };
-#define pcsimaai_uartoe 0x2                      /* output-enable mask, per pair */
-.oe_val = pcsimaai_uartoe << (num_pins * n)      /* uart2_group, n=2 → 0x2 << 4 = bit 5 */
-```
-
-Only the **upper** pin of each pair is output-enabled, so in every UART group
-**lower = RX, upper = TX**. That matches the bring-up guide's SIO table everywhere it
-appears (`SIO0[0]`=RX/`[1]`=TX, `SIO2[4]`=RX/`[5]`=TX, `SIO2[6]`=RX/`[7]`=TX,
-`SIO5[2]`=RX/`[3]`=TX, `SIO5[4]`=RX/`[5]`=TX).
-
-Now compare the SoM data sheet (005-HW-32 Table 2-9):
-
-| SODIMM | Signal name | DS says | Driver says that pin is | Consistent? |
-|--------|-------------|---------|--------------------------|-------------|
-| 99 | UART0_TXD | SIO4**[5]** | TX | ✅ |
-| 101 | UART0_RXD | SIO4**[4]** | RX | ✅ |
-| 203 | UART1_TXD | SIO1**[4]** | **RX** | ❌ inverted |
-| 205 | UART1_RXD | SIO1**[5]** | **TX** | ❌ inverted |
-
-UART0 is self-consistent — and UART0 is the one that works on JAJ. UART1 is inverted.
-Either the SoM crosses UART1 on the gold finger, or Table 2-9's SIO column is a typo.
-
-**Failing in both directions does not rule this out — it is what a module-side cross
-predicts.** A known-good FTDI wired by the usual convention gets, on a crossed net:
-host TX → connector "RX" → the SoC's *TX* pad (contention, board hears nothing), and
-host RX ← connector "TX" ← the SoC's *RX* pad (nothing to read). Both directions dead,
-with a perfectly good adapter. "The FTDI works on UART0" proves the adapter, not the
-connector's pin order.
-
-So before pulling the schematic, spend 60 s on the one test that discriminates —
-**swap the two data wires at the JAJ UART1 connector** and repeat the light printf
-check:
+**Software is not holding the line.** Pinmux is correct and live — SIO1 pins 4/5 owned by
+`401a000.uart`/`uart2_group`, pins 6/7 by `401c000.uart`/`uart3_group`:
 
 ```bash
-# over SSH; UART1 is the console
-systemctl stop serial-getty@ttyS0.service
-stty -F /dev/ttyS0 115200 cs8 -cstopb -parenb -crtscts raw -echo
-printf 'UART1_TX_OK\r\n' > /dev/ttyS0        # host should see this on the swapped wiring
-systemctl start serial-getty@ttyS0.service
+cat /sys/kernel/debug/pinctrl/4010000.pinmux-simaai-sio-pinctrl/pinmux-pins
 ```
 
-Two equivalent no-scope variants if you would rather not re-pin the connector:
+One non-hardware cause worth ruling out first: if the console got moved off `ttyS0` and no
+getty or app is writing to it, **TX legitimately idles high**.
 
-```bash
-sudo ./uart1-tx-probe.sh loopback   # jumper the two data pins; echo back = SoC drives+receives there
-sudo ./uart1-tx-probe.sh rx 20      # drive the pin labelled TX; bytes arriving = crossed net
-```
+##### Gold-finger UART is 1.8 V, not 3.3 V
 
-If the swap works, UART1 is usable with corrected wiring and this is a silkscreen/
-datasheet problem, not a hardware one. If it does not, the module is not driving the
-gold finger for UART1 at all and the remaining work is hardware — see below.
+Table 2-9 lists all six UART pins as `CMOS - 1.8V`. The module level-shifts elsewhere and says
+so (I2C0/I2C1: *“Level shifted from 1.8V - 3.3V”*; CAM_I2C: `CMOS - 3.3V`) — the UARTs get no
+such note. Expect 0–1.8 V at the SODIMM, and set the scope threshold accordingly before calling
+a line dead. On the carrier side of U10, remember from finding 2 that a mark on the SoC's TX
+net reaches only ~1.8 V until the pull-up is added — so a 3.3 V-threshold probe reads it as a
+permanent low.
 
-##### 3. Gold-finger UART is **1.8 V**, not 3.3 V
+##### Sharing UART1 with the on-module FTDI
 
-Table 2-9 lists all six UART pins as `CMOS - 1.8V`. The module explicitly level-shifts
-elsewhere and says so (I2C0/I2C1: *"Level shifted from 1.8V - 3.3V"*; CAM_I2C:
-`CMOS - 3.3V`) — the UARTs get no such note. Expect a 0–1.8 V swing at the SODIMM, so
-set the scope threshold accordingly before concluding a line is dead.
-
-This also matters for finding 2: if JAJ puts a fixed-direction 1.8↔3.3 V translator on
-that net (direction chosen from the Jetson pinout), a crossed Modalix UART1 would have
-the translator driving *into* the SoC's TX pad while the header side sits idle — which
-is both a dead TX **and** a contention risk. Check the JAJ schematic for a translator on
-the 203/205 nets before driving them.
-
-##### Quick triage
-
-```bash
-sudo ./scripts/uart1-tx-probe.sh report
-```
-
-Dumps `uart12` DT status, the `ttyS*` mapping, who owns the console, the SIO1 pinmux
-pins (expect pins 4/5 → `401a000.uart` / `uart2_group`), the `usb_uart12` state, and
-recent kernel UART errors.
-
-One non-hardware cause worth ruling out first: if the console got moved off `ttyS0` and
-no getty or app is writing to it, **TX legitimately idles high**.
-
-##### Remaining work — hardware, not device tree
-
-No DT change fits the data. In order:
-
-1. **JAJ schematic, UART1 translator** — direction, OE, and any DNP. A fixed-direction
-   part wired for the Jetson pinout would hold the carrier side at 3.3 V and block both
-   ways with Modalix (see finding 3).
-2. **Continuity, board powered down** — SODIMM 203/205 → the JST TX/RX pins. Splits
-   "module never routes UART1 off-module" from "carrier eats it".
-3. **Scope both SODIMM pins and both connector pins** during a *light* `printf` to
-   `ttyS0` — not wire-speed spam (see the hazard note).
-4. If the path is open on the module, mark the UART1 header **N/A on Modalix** the way
-   Key E PCIe and CAN already are, and stop there.
-
-##### Ship on UART0
-
-None of this blocks. **UART0 → `/dev/ttyS1` is verified TX+RX** on this exact stack
-(115200 8N1, no flow control). Treat the UART1 header as unavailable and UART1 itself
-as what it already is — the SoM console over USB-C.
-
-| Role | Use on JAJ + Modalix |
-|------|----------------------|
-| Carrier application serial | **UART0** → `/dev/ttyS1` |
-| Linux console / kernel log | **UART1** via SoM USB-C (FT230X) |
-| tRoot / secure console | JAJ silk **"UART2"** |
-| **UART1 JST-GH / J6** | **Not usable** until the schematic or continuity says otherwise |
+The SoM's FT230X and the gold finger tap the **same** SoC UART1 — they are not independent
+ports. With the USB-C cable plugged in, the FT230X's TX output drives the SoC's RX net
+directly (low impedance, on-module) while a J6 host reaches it only through U10's pass FET, so
+the module bridge wins any contest. **Unplug USB-C while testing J6 in the host→board
+direction**, or accept that J6 RX may be swamped. `uart13` on J6 pins 5/4 has no such problem.
 
 #### Recommended usage
 
 | Goal | Port | Device / host path | Settings |
 |------|------|--------------------|----------|
-| **Carrier generic serial (app / sensor / debug)** | **UART0** | Board `/dev/ttyS1`; host FTDI on UART0 header | **115200 8N1, no flow control** — the only working carrier UART |
+| **Carrier generic serial (app / sensor / debug)** | **UART0** | Board `/dev/ttyS1`; host FTDI on UART0 header | **115200 8N1, no flow control** — works as labelled, no rework |
+| **Second carrier serial on the J6 header** | **`uart13`** | Board `/dev/ttyS2`; host FTDI on **J6 pins 5/4** | 115200 8N1, no FC. No console/getty; no FTDI sharing the net |
+| **UART1 on the J6 header** | **UART1** | Board `/dev/ttyS0`; host FTDI on **J6 pins 2/3 swapped** + 3V3 pull-up on pin 3 | See [the fix](#the-fix); also move the console off `ttyS0` first |
 | **SoM Linux console / kernel log** | **UART1** | Host: SoM **USB-C** FT230X (`/dev/serial/by-id/usb-FTDI_FT230X_*`) = same as `/dev/ttyS0` | 115200 8N1, no FC |
 | **tRoot / secure console** | **UART_B** | Host FTDI on JAJ **“UART2”** header | 115200 8N1; prompt `TROOT:>` |
 | Free UART1 for an app only | UART1 | `/dev/ttyS0` after moving console off it | See below; remember USB-C is the same UART |
@@ -468,7 +510,7 @@ You may need `dialout` (`newgrp dialout` or re-login after `usermod -aG dialout 
 | M.2 Key M NVMe | PCIE0 x4 | **Works** (verified on hardware) |
 | M.2 Key E WiFi | PCIE1 x1 | **Unavailable** (no PCIE1 on Modalix SoM) |
 | Linux serial console | Often carrier **UART2** | **UART1** via SoM **USB-C** FTDI |
-| Carrier generic UART | — | **UART0** → `/dev/ttyS1` (verified TX/RX); **UART1 header N/A** |
+| Carrier generic UART | — | **UART0** → `/dev/ttyS1` (verified TX/RX); **UART1 header J6** works with the two data wires swapped + a 3V3 pull-up on pin 3, or use `uart13` → `/dev/ttyS2` on J6 pins 5/4 |
 | JAJ silk “UART2” | Linux debug (typical) | **tRoot only** on Modalix |
 | CAN | SoM CAN → JAJ TJA1051 | **No CAN on Modalix SoM** (see below) |
 
@@ -508,7 +550,9 @@ prefer a real controller over bit-bang).
 | NVMe not visible | PCIE0 / Key M seating / power; expect `lspci` NVMe + `lsblk` `nvme0n1` (Key M works when seated) |
 | Key E WiFi no PCIe device | Expected on Modalix — no PCIE1 data lanes (see above) |
 | No Linux shell on JAJ “UART2” | Expected on Modalix — that header is **tRoot**, use USB-C (UART1) or UART0 |
-| UART1 J6 header dead (Modalix) | Known — **use UART0**. `usb_uart12` is not the fix (refuted; it only disables the module's USB bridge). Open lead: swap the two data wires (crossed-pin theory). See [UART1 TX not reaching the carrier](#uart1-tx-not-reaching-the-carrier) |
+| UART1 J6 header dead both ways (Modalix) | Expected with conventional wiring — the pair is reversed on the gold finger. **Swap the two data wires at J6** (host TX → pin 2, host RX → pin 3). `usb_uart12` is not the fix (refuted). See [Getting UART1 out of the J6 header](#getting-uart1-out-of-the-j6-header) |
+| J6 UART1 receives but never transmits | Missing pull-up: J6 pin 3 carries the SoC's TX and its only pull-up is on the 1.8 V side, so a mark reaches ~1.8 V. Add 604 Ω–2.2 kΩ from pin 3 to **3.3 V** (not to pin 1, which is 5 V). Often works at 9600 and fails at 115200 |
+| `/dev/ttyS2` present but silent | `uart13` on J6 pins 5/4. Try host RX on pin 5 first (R60 already pulls that net to 3V3); if the SoC's TX is on pin 4, that net needs a pull-up |
 | Board hangs after UART traffic (no eth/SSH/USB-C) | Wire-speed UART flood — see the hazard note. Use light `printf` or paced `spam`; power-cycle to recover |
 | Can't reach the board over Ethernet | Host may be dual-homed on `192.168.7.0/24` (wired + wifi); wifi often can't reach it. Force the wired NIC: `ping -I enp5s0 192.168.7.50` |
 | UART0 works without FC, fails with `crtscts` | Expected — RTS/CTS not pinmuxed; use **`-crtscts`** |

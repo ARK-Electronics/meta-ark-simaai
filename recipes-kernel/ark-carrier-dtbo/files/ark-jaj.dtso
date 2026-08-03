@@ -13,15 +13,21 @@
  * UART (Modalix gold finger vs Jetson roles — see docs/bringup-jaj.md):
  *   - UART1 (SODIMM 203/205, SIO1[4]/[5], DT uart12 → ttyS0): generic app UART.
  *     Same net as on-module FTDI (SoM USB-C debug). TX/RX only (no RTS/CTS pinmux).
- *     NOTE: the JAJ UART1 header (J6) is dead BOTH WAYS with a known-good FTDI,
- *     though the SoC's UART1 is fine on the SoM USB serial. Not a DT problem:
- *     pinmux is correct, and SIO1_IO[2] ("usb_uart12") is the module's USB-bridge
- *     enable, not a routing select — leave it high. Open lead: per
- *     pinctrl-simaai-sio.c the TX pad of a UART pair is the *upper* pin, so DS
- *     Table 2-9 has 203/205 crossed. Use UART0 for carrier serial.
- *     See docs/bringup-jaj.md.
+ *     The JAJ J6 header needs the two data wires SWAPPED vs the silkscreen: every
+ *     SIO UART pair is even=RX / odd=TX, so SIO1[5] (=SODIMM 205, JAJ "UART1_RXD",
+ *     J6 pin 3) is the SoC's TX and SIO1[4] (=SODIMM 203, J6 pin 2) is its RX.
+ *     J6 pin 3 also needs a 3V3 pull-up added: U10 is an LSF0108 pass-FET
+ *     translator and JAJ populates one pull-up per channel on the side that
+ *     receives, so the net carrying the SoC's TX has its pull-up on the wrong
+ *     side and only reaches ~1V8. Nothing here is fixable in DT.
  *   - UART0 (SODIMM 99/101, SIO4[5]/[4], DT uart42 → typically ttyS1): optional
  *     second UART / serial console if you free UART1 from console=ttyS0.
+ *     Self-consistent in the DS (TXD on the odd pin) — and it works as labelled.
+ *   - UART1 RTS/CTS pins (SODIMM 207/209, SIO1[6]/[7], DT uart13): a SECOND UART
+ *     on the same J6 header (pins 5 and 4). RTS/CTS can never work as flow
+ *     control here — the SIO UART groups are 2-pin — so these are free, and
+ *     uart13 gives J6 a dedicated port with no console and no on-module FTDI
+ *     sharing the net.
  *   - UART_B (SODIMM 236/238, JAJ silk “UART2”): tRoot only, not a Linux tty.
  *
  * USB-C: FUSB301 @ i2c00 0x25 (see ark-jaj-usb-init.sh for dual-role)
@@ -267,9 +273,49 @@
  * Electrically shared with SoM on-module FTDI (USB-C). Stock images also use this
  * as console=ttyS0; move console to UART0 (uart42) or drop serial console to use
  * exclusively from userspace (see docs/bringup-jaj.md).
+ *
+ * On the JAJ J6 header this pair is reversed relative to the silkscreen — host TX
+ * goes to J6 pin 2 and host RX to J6 pin 3, plus a 3V3 pull-up on pin 3.
  */
 &uart12 {
 	status = "okay";
+};
+
+/*
+ * Second UART on the JAJ UART1 header (J6 pins 5 and 4).
+ * SoC: uart13 @ 0x0401c000, pinctrl uart3_group = SIO1 pins 6–7 → SODIMM 207/209,
+ * which JAJ wires as UART1_RTS#/UART1_CTS# to J6 pin 5 / pin 4.
+ *
+ * Those pins are dead weight otherwise: a SIO UART group is only 2 pins wide, so
+ * the controller has no RTS/CTS to put there and `crtscts` can never work. Enabling
+ * uart13 turns them into a real port, and unlike uart12 it carries no console, no
+ * getty, and no on-module FT230X in parallel on the net.
+ *
+ * Direction on J6 follows the same even=RX / odd=TX rule, so SIO1[7] is the TX pad.
+ * Confirm which J6 pin it lands on before wiring; if the SoC's TX lands on pin 4,
+ * that net needs a 3V3 pull-up added for the same LSF0108 reason as pin 3, while
+ * pin 5 already has one (R60). See docs/bringup-jaj.md.
+ */
+&uart13 {
+	status = "okay";
+};
+
+/*
+ * Pin the ttyS numbering. Without serialN aliases the 8250 line number comes from
+ * probe order, so adding uart13 (sio@1, after uart12) would have pushed UART0 from
+ * /dev/ttyS1 to /dev/ttyS2 and quietly broken every "UART0 = ttyS1" reference —
+ * including console=ttyS1 in the "free UART1 from console" procedure.
+ *
+ * Alias values must be literal path strings: an overlay cannot resolve &label to a
+ * path at compile time (dtc emits a phandle, which /aliases cannot hold).
+ */
+&{/aliases} {
+	/* UART1 → /dev/ttyS0 (console; SoM USB-C + J6 pins 2/3) */
+	serial0 = "/sio@1/uart@0x0401a000";
+	/* UART0 → /dev/ttyS1 (J5 header; verified TX+RX) */
+	serial1 = "/sio@4/uart@0x0404a000";
+	/* UART1 RTS/CTS pins → /dev/ttyS2 (J6 pins 5/4) */
+	serial2 = "/sio@1/uart@0x0401c000";
 };
 
 /*
