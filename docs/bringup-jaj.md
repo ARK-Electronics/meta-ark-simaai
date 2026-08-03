@@ -168,7 +168,8 @@ Without cameras, `imx219` logs I2C NACK (`-121`) — expected until modules are 
 
 - **SoM eMMC** (`/dev/mmcblk0`): default boot — see `wic/simaai-modalix-image.wks` in `meta-simaai`.
 - **Carrier NVMe (M.2 Key M)**: optional storage on **PCIE0 x4** — **verified working** on JAJ + Modalix.
-- **DT**: base `modalix-som_16g.dtb` + `ark-jaj.dtbo` overlay.
+- **DT**: base `modalix-som_16g.dtb` + `ark-jaj.dtbo` overlay. Optional add-on:
+  `ark-jaj-uart1-carrier.dtbo` (routes UART1 to the gold finger — see the UART section).
 - **JAJ status**: overlay deployed and verified on hardware (identity + dual CSI cameras + host I/O + Key M NVMe).
 - **USB-C dual-role**: see [usb-dual-role.md](usb-dual-role.md).
 
@@ -207,7 +208,7 @@ exposes three UARTs on the gold finger (005-HW-32 Table 2-9).
 | SoM name | SODIMM | SoC pinmux | DT / Linux | JAJ connector | Verified (JAJ + Modalix) |
 |----------|--------|------------|------------|---------------|---------------------------|
 | **UART0** | 99 TX / 101 RX (RTS# 103, CTS# 105) | SIO4 pins 4–5, `uart2_group`, **`uart42`** @ `0x0404a000` | **`/dev/ttyS1`** | UART0 header (3.3 V, TX/RX/RTS/CTS) | **TX+RX work** @ 115200, no FC. **HW flow control does not work** (RTS/CTS not pinmuxed). |
-| **UART1** | 203 TX / 205 RX (RTS# 207, CTS# 209) | SIO1 pins 4–5, `uart2_group`, **`uart12`** @ `0x0401a000` | **`/dev/ttyS0`** (stock console) | **SoM USB-C FTDI** + JAJ **J6** (3.3 V) | **USB-C: TX works** (console / spam). **J6 TX stuck idle high** with Modalix (SoC TX does not appear on carrier 3.3 V); same JAJ carrier is fine with Jetson on *its* debug UART (often UART2). |
+| **UART1** | 203 TX / 205 RX (RTS# 207, CTS# 209) | SIO1 pins 4–5, `uart2_group`, **`uart12`** @ `0x0401a000` | **`/dev/ttyS0`** (stock console) | **SoM USB-C FTDI** + JAJ **J6** (3.3 V) | **USB-C: TX works** (console / spam). **J6 TX stuck idle high** with Modalix (SoC TX does not appear on carrier 3.3 V); **see [UART1 TX not reaching the carrier](#uart1-tx-not-reaching-the-carrier)**. Same JAJ carrier is fine with Jetson on *its* debug UART (often UART2). |
 | **UART_B** | 236 TX / 238 RX | tRoot (not APU `ttyS*`) | *(no Linux tty)* | JAJ silk **“UART2”** | **tRoot** interactive (`TROOT:>`, help, etc.) @ 115200. |
 
 #### Pinmux (software)
@@ -236,6 +237,120 @@ UART groups in the current kernel DT. Enabling `crtscts` does **not** give worki
 flow control (CTS stays false on the peer). Use **TX/RX only**.
 
 `ark-jaj.dtbo` enables **`uart12`** (UART1) and **`uart42`** (UART0).
+
+#### UART1 TX not reaching the carrier
+
+Symptom: `/dev/ttyS0` opens, the pinmux looks right, the console works over the SoM
+USB serial — but **SODIMM 203 / J6 TX never toggles on a scope**. Three separate
+things in SiMa's own sources explain this. Work them in order; the first two cost
+nothing to test.
+
+##### 1. The `usb_uart12` line keeps UART1 on the module's USB bridge *(leading suspect)*
+
+SiMa's stock `modalix-som.dts` hogs a GPIO in **SIO block 1** — the same block that
+hosts `uart12` — and names it after the UART:
+
+```dts
+&port1 {                          /* port1 = gpio10 @ 0x04011000 = SIO1's GPIO bank */
+	snps,nr-gpios = <4>;
+	usb-hog {
+		gpio-hog;
+		gpios = <2 GPIO_ACTIVE_HIGH>;   /* SIO1_IO[2] */
+		output-high;
+		line-name = "usb_uart12";
+	};
+};
+```
+
+`ark-jaj.dtbo` never touches `port1`, so the line stays **high** on JAJ. The bring-up
+guide (005-HW-31 §1.6.2 #6) says UART1 defaults to an on-module UART-to-USB bridge and
+that only *"some carrier boards have the UART1 available on the 40-pin header"* — i.e.
+routing UART1 off-module is a per-carrier decision, and `usb_uart12` looks like the
+knob. (SiMa does not document the net; the sibling hog `usb_uart60` on `port6[0]` is
+driven **low**.)
+
+Test it live — no rebuild, ~30 s. Do this **over SSH**, not over the console you are
+about to move:
+
+```bash
+# terminal 1 — give the scope an edge to find (0x55 8N1 = clean 57.6 kHz square wave)
+sudo ./uart1-tx-probe.sh spam 120
+
+# terminal 2 — flip the mux while watching SODIMM 203 and 205
+sudo ./uart1-tx-probe.sh mux            # shows current state
+sudo ./uart1-tx-probe.sh mux carrier    # drive SIO1_IO[2] low
+sudo ./uart1-tx-probe.sh mux usb        # put it back
+```
+
+It is a `gpio-hog`, so `gpioset` returns `Device or resource busy`; the script pokes the
+DesignWare GPIO data register at `0x04011000` (bit 2) instead.
+
+If that lights up the carrier, make it persistent with the optional overlay:
+
+```text
+setenv dtbos "ark-jaj.dtbo ark-jaj-uart1-carrier.dtbo"
+```
+
+(`recipes-kernel/ark-carrier-dtbo/files/ark-jaj-uart1-carrier.dtso` — adds `output-low`
+to the hog. gpiolib checks `input` → `output-low` → `output-high`, so the override wins
+without deleting a property, which runtime overlays cannot do.)
+
+##### 2. UART1 TX/RX look crossed on the gold finger — scope pin **205** too
+
+The pinctrl driver settles which pin of a UART pair is the output. In
+`drivers/pinctrl/pinctrl-simaai-sio.c`:
+
+```c
+static const u32 uart2_pins[] = { 4, 5 };
+#define pcsimaai_uartoe 0x2                      /* output-enable mask, per pair */
+.oe_val = pcsimaai_uartoe << (num_pins * n)      /* uart2_group, n=2 → 0x2 << 4 = bit 5 */
+```
+
+Only the **upper** pin of each pair is output-enabled, so in every UART group
+**lower = RX, upper = TX**. That matches the bring-up guide's SIO table everywhere it
+appears (`SIO0[0]`=RX/`[1]`=TX, `SIO2[4]`=RX/`[5]`=TX, `SIO2[6]`=RX/`[7]`=TX,
+`SIO5[2]`=RX/`[3]`=TX, `SIO5[4]`=RX/`[5]`=TX).
+
+Now compare the SoM data sheet (005-HW-32 Table 2-9):
+
+| SODIMM | Signal name | DS says | Driver says that pin is | Consistent? |
+|--------|-------------|---------|--------------------------|-------------|
+| 99 | UART0_TXD | SIO4**[5]** | TX | ✅ |
+| 101 | UART0_RXD | SIO4**[4]** | RX | ✅ |
+| 203 | UART1_TXD | SIO1**[4]** | **RX** | ❌ inverted |
+| 205 | UART1_RXD | SIO1**[5]** | **TX** | ❌ inverted |
+
+UART0 is self-consistent — and UART0 is the one that works on JAJ. UART1 is inverted.
+Either the SoM crosses UART1 on the gold finger, or Table 2-9's SIO column is a typo;
+**scoping SODIMM 205 (J6 "RX") settles it in one probe.** If 205 is the one toggling,
+swap TX/RX at the header.
+
+##### 3. Gold-finger UART is **1.8 V**, not 3.3 V
+
+Table 2-9 lists all six UART pins as `CMOS - 1.8V`. The module explicitly level-shifts
+elsewhere and says so (I2C0/I2C1: *"Level shifted from 1.8V - 3.3V"*; CAM_I2C:
+`CMOS - 3.3V`) — the UARTs get no such note. Expect a 0–1.8 V swing at the SODIMM, so
+set the scope threshold accordingly before concluding a line is dead.
+
+This also matters for finding 2: if JAJ puts a fixed-direction 1.8↔3.3 V translator on
+that net (direction chosen from the Jetson pinout), a crossed Modalix UART1 would have
+the translator driving *into* the SoC's TX pad while the header side sits idle — which
+is both a dead TX **and** a contention risk. Check the JAJ schematic for a translator on
+the 203/205 nets before driving them.
+
+##### Quick triage
+
+```bash
+sudo ./scripts/uart1-tx-probe.sh report
+```
+
+Dumps `uart12` DT status, the `ttyS*` mapping, who owns the console, the SIO1 pinmux
+pins (expect pins 4/5 → `401a000.uart` / `uart2_group`), the `usb_uart12` state, and
+recent kernel UART errors.
+
+One non-hardware cause worth ruling out first: if the console got moved off `ttyS0` and
+no getty or app is writing to it, **TX legitimately idles high**. `spam` above removes
+that doubt.
 
 #### Recommended usage
 
@@ -341,6 +456,6 @@ prefer a real controller over bit-bang).
 | NVMe not visible | PCIE0 / Key M seating / power; expect `lspci` NVMe + `lsblk` `nvme0n1` (Key M works when seated) |
 | Key E WiFi no PCIe device | Expected on Modalix — no PCIE1 data lanes (see above) |
 | No Linux shell on JAJ “UART2” | Expected on Modalix — that header is **tRoot**, use USB-C (UART1) or UART0 |
-| UART1 J6 TX stuck high (Modalix) | SoC TX is on **USB-C**; J6 path not carrying Modalix UART1 TX (pinmux OK; carrier OK with Jetson on its console port) |
+| UART1 J6 TX stuck high (Modalix) | `./scripts/uart1-tx-probe.sh report`. In order: (1) `usb_uart12` hog holds UART1 on the module's USB bridge, (2) TX/RX crossed — scope SODIMM **205**, (3) it's **1.8 V**, not 3.3 V. See [UART1 TX not reaching the carrier](#uart1-tx-not-reaching-the-carrier) |
 | UART0 works without FC, fails with `crtscts` | Expected — RTS/CTS not pinmuxed; use **`-crtscts`** |
 | JAJ CAN connector silent on Modalix | Expected — SoM pins 143/145 **N/A**; TJA1051 not driven; use USB/SPI CAN |

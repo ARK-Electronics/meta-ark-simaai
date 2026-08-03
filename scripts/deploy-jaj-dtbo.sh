@@ -11,6 +11,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DTSO="$REPO_DIR/recipes-kernel/ark-carrier-dtbo/files/ark-jaj.dtso"
+# Optional add-on: installed but NOT added to dtbos. Enable by hand with
+#   fw_setenv dtbos "ark-jaj.dtbo ark-jaj-uart1-carrier.dtbo"
+UART1_DTSO="$REPO_DIR/recipes-kernel/ark-carrier-dtbo/files/ark-jaj-uart1-carrier.dtso"
+UART1_PROBE="$REPO_DIR/scripts/uart1-tx-probe.sh"
 BOARD="${BOARD:-sima@192.168.7.50}"
 PASSWORD="${PASSWORD:-edgeai}"
 REBOOT=0
@@ -51,6 +55,8 @@ echo "==> Source: $DTSO"
 REMOTE_DIR=/tmp/ark-jaj-dtbo
 ssh_ "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
 scp_ "$DTSO" "$BOARD:$REMOTE_DIR/ark-jaj.dtso"
+scp_ "$UART1_DTSO" "$BOARD:$REMOTE_DIR/ark-jaj-uart1-carrier.dtso"
+scp_ "$UART1_PROBE" "$BOARD:$REMOTE_DIR/"
 
 # USB init (FUSB301 dual-role + SuperSpeed PM) — works without full kernel TCPM
 USB_INIT="$REPO_DIR/scripts/ark-jaj-usb-init.sh"
@@ -58,18 +64,23 @@ USB_SVC="$REPO_DIR/scripts/ark-jaj-usb.service"
 scp_ "$USB_INIT" "$USB_SVC" "$BOARD:$REMOTE_DIR/"
 
 echo "==> Compiling overlay on target"
-ssh_ "dtc -@ -I dts -O dtb -o $REMOTE_DIR/ark-jaj.dtbo $REMOTE_DIR/ark-jaj.dtso && ls -la $REMOTE_DIR/ark-jaj.dtbo"
+ssh_ "dtc -@ -I dts -O dtb -o $REMOTE_DIR/ark-jaj.dtbo $REMOTE_DIR/ark-jaj.dtso && \
+      dtc -@ -I dts -O dtb -o $REMOTE_DIR/ark-jaj-uart1-carrier.dtbo $REMOTE_DIR/ark-jaj-uart1-carrier.dtso && \
+      ls -la $REMOTE_DIR/*.dtbo"
 
 echo "==> Installing DTBO + USB init into /boot and /usr/local"
 ssh_ "echo '$PASSWORD' | sudo -S bash -c '
 set -e
-install -m 0644 $REMOTE_DIR/ark-jaj.dtbo /boot/boot-0/ark-jaj.dtbo
-install -m 0644 $REMOTE_DIR/ark-jaj.dtbo /boot/boot-1/ark-jaj.dtbo
+for dtbo in ark-jaj.dtbo ark-jaj-uart1-carrier.dtbo; do
+  install -m 0644 $REMOTE_DIR/\$dtbo /boot/boot-0/\$dtbo
+  install -m 0644 $REMOTE_DIR/\$dtbo /boot/boot-1/\$dtbo
+done
 mkdir -p /boot/boot-0/overlays /boot/boot-1/overlays 2>/dev/null || true
-cp -f /boot/boot-0/ark-jaj.dtbo /boot/boot-0/overlays/ 2>/dev/null || true
-cp -f /boot/boot-1/ark-jaj.dtbo /boot/boot-1/overlays/ 2>/dev/null || true
+cp -f /boot/boot-0/*.dtbo /boot/boot-0/overlays/ 2>/dev/null || true
+cp -f /boot/boot-1/*.dtbo /boot/boot-1/overlays/ 2>/dev/null || true
 install -d /usr/local/sbin
 install -m 0755 $REMOTE_DIR/ark-jaj-usb-init.sh /usr/local/sbin/ark-jaj-usb-init.sh
+install -m 0755 $REMOTE_DIR/uart1-tx-probe.sh /usr/local/sbin/uart1-tx-probe.sh
 install -m 0644 $REMOTE_DIR/ark-jaj-usb.service /etc/systemd/system/ark-jaj-usb.service
 # Prefer i2c-tools for FUSB programming
 command -v i2cget >/dev/null || apt-get install -y i2c-tools 2>/dev/null || true

@@ -10,6 +10,7 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI = " \
     file://Makefile \
     file://ark-jaj.dtso \
+    file://ark-jaj-uart1-carrier.dtso \
     file://ark-pab.dtso \
     file://ark-pab-v3.dtso \
     file://ark-can-pab.dtso \
