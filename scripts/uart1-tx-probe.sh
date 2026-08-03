@@ -3,15 +3,20 @@
 #
 # Run this ON THE TARGET (eLxr / Yocto), as root.
 #
-#   ./uart1-tx-probe.sh report          # non-invasive: what the kernel thinks is set up
-#   ./uart1-tx-probe.sh spam [seconds]  # transmit 0x55 on UART1 so there is an edge to scope
-#   ./uart1-tx-probe.sh mux             # read the usb_uart12 select line
-#   ./uart1-tx-probe.sh mux carrier     # drive usb_uart12 low
-#   ./uart1-tx-probe.sh mux usb         # drive usb_uart12 high (stock SoM default)
+#   ./uart1-tx-probe.sh report            # non-invasive: what the kernel thinks is set up
+#   ./uart1-tx-probe.sh spam [seconds]    # transmit 0x55 on UART1 so there is an edge to scope
+#   ./uart1-tx-probe.sh rx [seconds]      # hexdump whatever arrives on UART1 RX
+#   ./uart1-tx-probe.sh loopback [secs]   # send a pattern, report whether it comes back
+#   ./uart1-tx-probe.sh mux               # read the usb_uart12 line
+#   ./uart1-tx-probe.sh mux carrier       # drive usb_uart12 low
+#   ./uart1-tx-probe.sh mux usb           # drive usb_uart12 high (stock SoM default)
 #
-# WARNING: "mux carrier" may cut the SoM USB-C serial console, because UART1 is
-# the console on stock images. Run it over SSH/Ethernet, not over the console you
-# are about to move.
+# WARNING: UART1 is the console on stock images.
+#   - "mux carrier" is a DEAD END on JAJ: measured, it disables the on-module
+#     FTDI (USB device disconnects) and puts nothing on the carrier. Kept only
+#     so the line can be characterised. Leave it HIGH.
+#   - "rx" and "loopback" stop serial-getty@ttyS0 for the duration.
+# Run all of these over SSH/Ethernet, not over the console they disturb.
 #
 # Background (see docs/bringup-jaj.md):
 #   UART1 = uart12 @ 0x0401a000 = SIO block 1, index 2 = SIO1 pins 4/5.
@@ -169,10 +174,71 @@ cmd_spam() {
 	echo "done"
 }
 
+# Take UART1 away from getty so injected bytes reach us instead of a login prompt.
+GETTY=""
+getty_stop() {
+	GETTY="serial-getty@${UART_DEV##*/}.service"
+	if systemctl is-active --quiet "$GETTY" 2>/dev/null; then
+		echo "(stopping $GETTY for the duration)"
+		systemctl stop "$GETTY"
+	else
+		GETTY=""
+	fi
+	trap getty_restore EXIT INT TERM
+}
+getty_restore() {
+	[ -n "$GETTY" ] || return 0
+	systemctl start "$GETTY" 2>/dev/null || true
+	GETTY=""
+}
+
+cmd_rx() {
+	secs="${1:-15}"
+	[ -c "$UART_DEV" ] || die "$UART_DEV is not a character device"
+	getty_stop
+	stty -F "$UART_DEV" 115200 cs8 -cstopb -parenb -crtscts raw -echo
+	echo "Listening on $UART_DEV for ${secs}s."
+	echo "Drive the carrier UART1 pins from an external 3.3 V USB-serial adapter now."
+	echo "Anything that shows up means the SoC's RX pad is reachable from that pin."
+	timeout "$secs" cat "$UART_DEV" 2>/dev/null | od -An -tx1c || true
+	getty_restore
+	echo "done"
+}
+
+cmd_loopback() {
+	secs="${1:-8}"
+	pattern="ARKLOOPBACK0123456789"
+	[ -c "$UART_DEV" ] || die "$UART_DEV is not a character device"
+	echo "Jumper the two UART1 data pins together at the carrier connector first."
+	getty_stop
+	stty -F "$UART_DEV" 115200 cs8 -cstopb -parenb -crtscts raw -echo
+	# keep the port open for the whole test so the reader does not race the writer
+	( sleep 1; i=0; while [ $i -lt 20 ]; do printf '%s\r\n' "$pattern"; i=$((i + 1)); sleep 0.2; done > "$UART_DEV" ) &
+	writer=$!
+	got=$(timeout "$secs" cat "$UART_DEV" 2>/dev/null | tr -dc '[:print:]' || true)
+	kill "$writer" 2>/dev/null || true
+	wait "$writer" 2>/dev/null || true
+	getty_restore
+	echo "--- received ---"
+	echo "$got" | cut -c1-200
+	case "$got" in
+	*"$pattern"*)
+		echo
+		echo "ECHO SEEN: the SoC drives AND receives on that connector."
+		echo "The carrier path works -- your host TX/RX wiring is simply swapped." ;;
+	*)
+		echo
+		echo "no echo: the loop is open somewhere between the SoC pads and the connector"
+		echo "(gold finger not driven, translator direction/OE, or DNP in the path)." ;;
+	esac
+}
+
 case "${1:-report}" in
-report) cmd_report ;;
-spam)   shift; cmd_spam "$@" ;;
-mux)    shift; cmd_mux "$@" ;;
--h|--help|help) sed -n '2,20p' "$0" ;;
-*) die "unknown command '$1' (try: report | spam | mux)" ;;
+report)   cmd_report ;;
+spam)     shift; cmd_spam "$@" ;;
+rx)       shift; cmd_rx "$@" ;;
+loopback) shift; cmd_loopback "$@" ;;
+mux)      shift; cmd_mux "$@" ;;
+-h|--help|help) sed -n '2,25p' "$0" ;;
+*) die "unknown command '$1' (try: report | spam | rx | loopback | mux)" ;;
 esac

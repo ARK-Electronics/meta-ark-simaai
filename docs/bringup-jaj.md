@@ -168,8 +168,7 @@ Without cameras, `imx219` logs I2C NACK (`-121`) — expected until modules are 
 
 - **SoM eMMC** (`/dev/mmcblk0`): default boot — see `wic/simaai-modalix-image.wks` in `meta-simaai`.
 - **Carrier NVMe (M.2 Key M)**: optional storage on **PCIE0 x4** — **verified working** on JAJ + Modalix.
-- **DT**: base `modalix-som_16g.dtb` + `ark-jaj.dtbo` overlay. Optional add-on:
-  `ark-jaj-uart1-carrier.dtbo` (routes UART1 to the gold finger — see the UART section).
+- **DT**: base `modalix-som_16g.dtb` + `ark-jaj.dtbo` overlay.
 - **JAJ status**: overlay deployed and verified on hardware (identity + dual CSI cameras + host I/O + Key M NVMe).
 - **USB-C dual-role**: see [usb-dual-role.md](usb-dual-role.md).
 
@@ -241,14 +240,17 @@ flow control (CTS stays false on the peer). Use **TX/RX only**.
 #### UART1 TX not reaching the carrier
 
 Symptom: `/dev/ttyS0` opens, the pinmux looks right, the console works over the SoM
-USB serial — but **SODIMM 203 / J6 TX never toggles on a scope**. Three separate
-things in SiMa's own sources explain this. Work them in order; the first two cost
-nothing to test.
+USB serial — but **the JAJ UART1 connector sits at a flat 3.3 V, no edges**, with
+0x55 spam running the whole time.
 
-##### 1. The `usb_uart12` line keeps UART1 on the module's USB bridge *(leading suspect)*
+**Proven so far:** the SoC's UART1 TX is fine (it drives the SoM USB serial), the
+pinmux stays on SIO1 pins 4/5, and nothing software-side is holding TX off. The break
+is between the SoC pads and the carrier connector.
 
-SiMa's stock `modalix-som.dts` hogs a GPIO in **SIO block 1** — the same block that
-hosts `uart12` — and names it after the UART:
+##### 1. ~~The `usb_uart12` line routes UART1 to the carrier~~ — REFUTED on hardware
+
+`modalix-som.dts` hogs a GPIO in **SIO block 1** — the same block that hosts `uart12` —
+and names it after the UART, which made it look like a module-side routing mux:
 
 ```dts
 &port1 {                          /* port1 = gpio10 @ 0x04011000 = SIO1's GPIO bank */
@@ -262,40 +264,20 @@ hosts `uart12` — and names it after the UART:
 };
 ```
 
-`ark-jaj.dtbo` never touches `port1`, so the line stays **high** on JAJ. The bring-up
-guide (005-HW-31 §1.6.2 #6) says UART1 defaults to an on-module UART-to-USB bridge and
-that only *"some carrier boards have the UART1 available on the 40-pin header"* — i.e.
-routing UART1 off-module is a per-carrier decision, and `usb_uart12` looks like the
-knob. (SiMa does not document the net; the sibling hog `usb_uart60` on `port6[0]` is
-driven **low**.)
+It is not. Measured on JAJ + Modalix with 0x55 spam running continuously:
 
-Test it live — no rebuild, ~30 s. Do this **over SSH**, not over the console you are
-about to move:
+| `usb_uart12` | SoM USB serial | JAJ UART1 connector |
+|---|---|---|
+| **HIGH** (stock) | full 0x55 spam ✅ | 3.3 V idle, no edges |
+| **LOW** | **FTDI drops off USB** | 3.3 V idle, no edges |
+| HIGH (restored) | 0x55 again ✅ | still silent |
 
-```bash
-# terminal 1 — give the scope an edge to find (0x55 8N1 = clean 57.6 kHz square wave)
-sudo ./uart1-tx-probe.sh spam 120
+So `usb_uart12` is an **enable/reset for the on-module USB-serial bridge**, not a
+routing select — driving it low disables the bridge and puts nothing on the gold
+finger. **Leave it HIGH.** `uart1-tx-probe.sh mux carrier` is kept only for
+characterising the line; there is no overlay for it, deliberately.
 
-# terminal 2 — flip the mux while watching SODIMM 203 and 205
-sudo ./uart1-tx-probe.sh mux            # shows current state
-sudo ./uart1-tx-probe.sh mux carrier    # drive SIO1_IO[2] low
-sudo ./uart1-tx-probe.sh mux usb        # put it back
-```
-
-It is a `gpio-hog`, so `gpioset` returns `Device or resource busy`; the script pokes the
-DesignWare GPIO data register at `0x04011000` (bit 2) instead.
-
-If that lights up the carrier, make it persistent with the optional overlay:
-
-```text
-setenv dtbos "ark-jaj.dtbo ark-jaj-uart1-carrier.dtbo"
-```
-
-(`recipes-kernel/ark-carrier-dtbo/files/ark-jaj-uart1-carrier.dtso` — adds `output-low`
-to the hog. gpiolib checks `input` → `output-low` → `output-high`, so the override wins
-without deleting a property, which runtime overlays cannot do.)
-
-##### 2. UART1 TX/RX look crossed on the gold finger — scope pin **205** too
+##### 2. UART1 TX/RX look crossed on the gold finger — **still untested, now the leading theory**
 
 The pinctrl driver settles which pin of a UART pair is the output. In
 `drivers/pinctrl/pinctrl-simaai-sio.c`:
@@ -321,9 +303,32 @@ Now compare the SoM data sheet (005-HW-32 Table 2-9):
 | 205 | UART1_RXD | SIO1**[5]** | **TX** | ❌ inverted |
 
 UART0 is self-consistent — and UART0 is the one that works on JAJ. UART1 is inverted.
-Either the SoM crosses UART1 on the gold finger, or Table 2-9's SIO column is a typo;
-**scoping SODIMM 205 (J6 "RX") settles it in one probe.** If 205 is the one toggling,
-swap TX/RX at the header.
+Either the SoM crosses UART1 on the gold finger, or Table 2-9's SIO column is a typo.
+
+**Only the pin labelled TX has been scoped so far**, so this is untouched by the
+`usb_uart12` result. Note that a flat 3.3 V on the TX pin is exactly what a crossed
+net predicts: SODIMM 203 would be the SoC's *input*, so the carrier side of any
+translator idles at its pull level with nothing driving it. Three ways to settle it,
+cheapest first:
+
+```bash
+# a) no scope, no schematic: jumper the two connector data pins together
+sudo ./uart1-tx-probe.sh loopback
+#    echo back  -> the SoC drives and receives there; host TX/RX are just swapped
+#    no echo    -> the loop is open between the SoC pads and the connector
+
+# b) no scope: drive the pin labelled TX from an external 3.3 V USB-serial and watch
+sudo ./uart1-tx-probe.sh rx 20
+#    bytes arrive -> that pin reaches the SoC's RX pad, i.e. the net is crossed
+
+# c) scope the pin labelled RX while spamming
+sudo ./uart1-tx-probe.sh spam 120
+```
+
+If any of those hit, swap TX/RX at the connector and UART1 works as-is. If all three
+come up empty, the module is not driving the gold finger for UART1 at all — probe
+SODIMM 203/205 at the socket, and ohm them out to the connector with the board powered
+down to find a translator or DNP in the path.
 
 ##### 3. Gold-finger UART is **1.8 V**, not 3.3 V
 
@@ -351,6 +356,13 @@ recent kernel UART errors.
 One non-hardware cause worth ruling out first: if the console got moved off `ttyS0` and
 no getty or app is writing to it, **TX legitimately idles high**. `spam` above removes
 that doubt.
+
+##### Meanwhile: use UART0
+
+Nothing above blocks shipping. **UART0 → `/dev/ttyS1` on the UART0 header is verified
+working TX+RX** on this exact stack (115200 8N1, no flow control). Unless an
+application specifically needs the UART1 connector, put it on UART0 and treat UART1 as
+the SoM console it already is.
 
 #### Recommended usage
 
@@ -456,6 +468,6 @@ prefer a real controller over bit-bang).
 | NVMe not visible | PCIE0 / Key M seating / power; expect `lspci` NVMe + `lsblk` `nvme0n1` (Key M works when seated) |
 | Key E WiFi no PCIe device | Expected on Modalix — no PCIE1 data lanes (see above) |
 | No Linux shell on JAJ “UART2” | Expected on Modalix — that header is **tRoot**, use USB-C (UART1) or UART0 |
-| UART1 J6 TX stuck high (Modalix) | `./scripts/uart1-tx-probe.sh report`. In order: (1) `usb_uart12` hog holds UART1 on the module's USB bridge, (2) TX/RX crossed — scope SODIMM **205**, (3) it's **1.8 V**, not 3.3 V. See [UART1 TX not reaching the carrier](#uart1-tx-not-reaching-the-carrier) |
+| UART1 J6 TX stuck high (Modalix) | Open issue. `usb_uart12` is **not** the fix (refuted — it only disables the module's USB bridge). Try `uart1-tx-probe.sh loopback` / `rx` for the crossed-pin theory; remember the gold finger is **1.8 V**. Use **UART0** meanwhile. See [UART1 TX not reaching the carrier](#uart1-tx-not-reaching-the-carrier) |
 | UART0 works without FC, fails with `crtscts` | Expected — RTS/CTS not pinmuxed; use **`-crtscts`** |
 | JAJ CAN connector silent on Modalix | Expected — SoM pins 143/145 **N/A**; TJA1051 not driven; use USB/SPI CAN |

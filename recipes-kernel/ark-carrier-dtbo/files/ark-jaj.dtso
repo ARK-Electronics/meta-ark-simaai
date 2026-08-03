@@ -13,11 +13,12 @@
  * UART (Modalix gold finger vs Jetson roles — see docs/bringup-jaj.md):
  *   - UART1 (SODIMM 203/205, SIO1[4]/[5], DT uart12 → ttyS0): generic app UART.
  *     Same net as on-module FTDI (SoM USB-C debug). TX/RX only (no RTS/CTS pinmux).
- *     NOTE: TX may not reach the gold finger. The stock SoM DT hogs SIO1_IO[2]
- *     ("usb_uart12", port1 line 2) output-high, which looks like the on-module
- *     USB-bridge/gold-finger select; and per pinctrl-simaai-sio.c the TX pad of a
- *     UART pair is the *upper* pin, so DS Table 2-9 has 203/205 crossed. Stack
- *     ark-jaj-uart1-carrier.dtbo to flip the hog. See docs/bringup-jaj.md.
+ *     NOTE: TX does not reach the JAJ UART1 connector (flat 3.3 V, no edges) even
+ *     though the SoC transmits fine on the SoM USB serial. The stock SoM DT hogs
+ *     SIO1_IO[2] ("usb_uart12", port1 line 2) high — measured to be the on-module
+ *     USB-bridge enable, NOT a routing select, so leave it high. Open lead: per
+ *     pinctrl-simaai-sio.c the TX pad of a UART pair is the *upper* pin, so DS
+ *     Table 2-9 has 203/205 crossed. Use UART0 meanwhile. See docs/bringup-jaj.md.
  *   - UART0 (SODIMM 99/101, SIO4[5]/[4], DT uart42 → typically ttyS1): optional
  *     second UART / serial console if you free UART1 from console=ttyS0.
  *   - UART_B (SODIMM 236/238, JAJ silk “UART2”): tRoot only, not a Linux tty.
