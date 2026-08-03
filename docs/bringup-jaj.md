@@ -250,9 +250,10 @@ probes before `uart42` (lower SIO block), so without them UART0 would have moved
 
 #### Getting UART1 out of the J6 header
 
-**Status: fixable on the bench — swap the two data wires at J6 and add one pull-up.**
-Nothing on the module is broken, and no device-tree change reaches any of it. Two things go
-wrong and they compound.
+**Status: two documented faults (below) plus a measured open somewhere in the path.**
+No device-tree change reaches any of it. Findings 1 and 2 come from the hardware documents and
+are certain; finding 3 is what the board actually measures today, and it has to be localised
+before the wiring fix can matter.
 
 ##### 1. The UART1 pair is reversed on the gold finger
 
@@ -320,6 +321,55 @@ U10 itself is exonerated — UART0 runs through the same package, the same 1V8/3
 same EN, so Vref and EN are good. Nothing else sits on the four UART1 3V3 nets except U10,
 R59/R60, the D18 TVS array and J6: there is no carrier USB-serial bridge to contend with.
 
+##### 3. Measured: nothing on J6 reaches the SoC at all (open in the path)
+
+Enabling `uart13` turns J6 into a fully instrumented connector — all four signal pins now land
+on live UART pads, so a host adapter on any of them must show up somewhere:
+
+| J6 pin | SODIMM | SoC pad | Linux |
+|--------|--------|---------|-------|
+| 2 | 203 | SIO1[4] | `ttyS0` (uart12) |
+| 3 | 205 | SIO1[5] | `ttyS0` (uart12) |
+| 4 | 209 | SIO1[6] or [7] | `ttyS2` (uart13) |
+| 5 | 207 | SIO1[7] or [6] | `ttyS2` (uart13) |
+
+Measured with an FT232R on J6 and the SoM USB-C FT230X watching the same `uart12` net
+on-module (`uart1-j6-linktest.py`, plus a held-low test):
+
+| Test | Result |
+|------|--------|
+| Board transmits on `ttyS0`, adapter listens (115200 and 9600) | **0 bytes** |
+| Board transmits on `ttyS2`, adapter listens (115200 and 9600) | **0 bytes** |
+| Host transmits on adapter → `ttyS0`/`ttyS1`/`ttyS2` `rx` counters | **all stay 0** |
+| Same host traffic, watching `uart12` output on SoM USB-C | **12/12 markers intact** |
+| Adapter TX held **continuously low** (break) while the board transmits | **8/8 markers intact** |
+| SoC `uart12` TX itself, on the SoM USB-C bridge | **works** |
+
+The last two rows are the interesting ones. If J6 pin 3 were connected to the SoC's `uart12`
+TX net through U10, holding that pin low for seconds could not leave the console output
+untouched — the pass FET is ~10 Ω and the SoM's own FT230X taps the same net. It did leave it
+untouched. **So the pin the adapter drives is not electrically on that net**, and the reversed
+pair alone no longer explains the failure: there is an open as well.
+
+Localise it cheapest-first — each step is under a minute:
+
+1. **Validate the adapter and its wires.** Touch the adapter's TX and RX wire ends together,
+   off the board, and loop back at the host. Proves the adapter, the crimps and the jumpers in
+   one shot; this is the most likely culprit and the easiest to miss.
+   Also confirm the breakout's logic jumper is on **3.3 V**, not 5 V.
+2. **Loopback at the connector.** Jumper J6 pin 2 to pin 3 and run
+   `sudo ./uart1-tx-probe.sh loopback` on the board. This bypasses the adapter entirely.
+   An echo proves the module *does* route UART1 to the gold finger and U10 passes it, which
+   would put the fault back in the adapter wiring. No echo means the open is on the carrier or
+   the module.
+3. **Continuity, powered down.** J6 pin 2 ↔ U10 pin 18, and U10 pin 3 ↔ SODIMM 203. That
+   splits "the carrier eats it" from "the module never routes UART1 off-module".
+
+U10 is still exonerated as a part: UART0 has passed real traffic through the same package,
+rails and EN on this carrier (`rx` counted 54 bytes from J5). If step 2 fails and step 3 shows
+the carrier intact up to the gold finger, then the module does not route SODIMM 203/205/207/209
+and the UART1 header is genuinely unavailable — mark it N/A the way Key E PCIe and CAN are.
+
 ##### The fix
 
 J6 is a 6-pin JST GH (BM06B-GHS-TBT): **1 = 5 V, 2 = UART1_TXD_3V3, 3 = UART1_RXD_3V3,
@@ -332,6 +382,8 @@ host RX  ---------------------------------- J6 pin 3   <- the pin silkscreened R
                      |
                      +--[ 1k ]--- adapter 3V3          <- the missing pull-up
 ```
+
+Once finding 3 is resolved and the path is continuous:
 
 1. **Swap the two data wires** relative to the usual convention: host TX to the pin labelled
    TX, host RX to the pin labelled RX.
