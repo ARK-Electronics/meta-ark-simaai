@@ -363,6 +363,17 @@ cat /proc/tty/driver/serial
 `rx` climbing off zero is proof the host→board direction is fixed; bytes arriving at the host
 prove board→host.
 
+Or drive both directions at once from the host, which also names the failure mode:
+
+```bash
+./scripts/uart1-j6-linktest.py                    # ttyS0 / uart12 on J6 pins 2/3
+./scripts/uart1-j6-linktest.py --dev /dev/ttyS2   # uart13 on J6 pins 5/4
+```
+
+It sweeps 115200 and 9600, watches the adapter for board→host, and reads the kernel's own
+receive counter for host→board. Needs `dialout` on the host
+(`sudo usermod -aG dialout $USER && newgrp dialout`).
+
 ##### Alternative with no resistor: use `uart13` on J6 pins 5/4
 
 `ark-jaj.dtbo` also enables **`uart13`** (SIO1 pins 6–7 → SODIMM 207/209 → **J6 pin 5 and
