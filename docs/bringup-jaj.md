@@ -390,7 +390,8 @@ adapter and the `rx` counters on both pins: it still does nothing. The DTS namin
 `usb_uart60` on SIO6, which reads exactly like a USB-vs-UART select), but on this carrier
 toggling it has no effect on the header either way.
 
-**Worth knowing even though it is not the UART fault:** JAJ drives `USB0_VBUS_DETn` (SODIMM 87)
+**Worth knowing even though it is not the UART fault** (now fixed in the overlay — see
+[usb-dual-role.md](usb-dual-role.md)): JAJ drives `USB0_VBUS_DETn` (SODIMM 87)
 from the FUSB301's **open-drain INT_N**, and **R70 — the 47 kΩ pull-up to 1V8 — is DNP in the
 Production variant**. Nothing else pulls that net. Since no Linux driver services the FUSB301
 interrupt, `INTERRUPT` (0x13) latches (measured `0x07`, with `MASK` = 0x00 and global

@@ -147,6 +147,62 @@
 	};
 };
 
+/*
+ * USB0_VBUS_DETn (SODIMM 87 = SoM GPIO00_VBUS_DET) — input with a pull-up.
+ *
+ * JAJ drives this net from the FUSB301's open-drain INT_N (U24 pin 10) and leaves
+ * R70 — the 47k pull-up to 1V8 — DNP, because a Jetson SoM presents that pin as an
+ * input with an internal pull-up and the external one is redundant. Modalix does
+ * not: the SoM DTS hogs SIO6[0] as `output-low` under the name "usb_uart60", so the
+ * module drives the net low and can never read it. With the hog removed and nothing
+ * pulling the net, an open-drain driver has no valid high either.
+ *
+ * So: drop the hog and bias the pad up, which is what the carrier already expects.
+ * The net then means what it says — released = 1 (no pending event), INT_N asserted
+ * = 0. Note JAJ names it active low (`..._DETn`) while the SoM pin name implies
+ * active high, and that INT_N is an *interrupt*, not a VBUS level: it latches on
+ * attach/detach and stays low until someone reads FUSB301 register 0x13. Read VBUS
+ * state from STATUS (0x11) bit 3 over I2C, not from this pin.
+ *
+ * GPIO00's SIO assignment is not in the SoM data sheet (Table 3-2 starts at GPIO01 =
+ * SIO6[1]); SIO6[0] follows that table's GPIO0x = SIO6[x] pattern and is confirmed on
+ * hardware by the pin tracking INT_N. See docs/bringup-jaj.md.
+ */
+&{/sio@6/gpio@0x04061000/gpio@0/uart-hog} {
+	status = "disabled";
+};
+
+&pins_gpio60_deafult {		/* SiMa's spelling; label is "deafult" in modalix-som.dtsi */
+	bias-pull-up;
+	input-enable;
+};
+
+&port6 {
+	gpio-line-names =
+		"usb0_vbus_det",	/* SODIMM 87  — FUSB301 INT_N, open drain, pulled up here */
+		"gpio01",
+		"gpio02",
+		"gpio03",
+		"gpio04",
+		"gpio05",
+		"cam_mux_sel",		/* SODIMM 130 — FSUSB42 select, owned by cam_i2cmux */
+		"gpio07";
+
+	/*
+	 * Claim SIO6[0] as an input. Disabling the SoM's output-low hog is not enough:
+	 * the DesignWare GPIO's direction register keeps whatever the previous boot
+	 * stage left in it, and the kernel driver does not reset it — measured
+	 * SWPORTA_DDR bit0 still set (output) with no hog in sight. An `input` hog
+	 * makes the GPIO core drive the direction to input at probe.
+	 */
+	usb0-vbus-det-hog {
+		gpio-hog;
+		gpios = <0 0>;
+		input;
+		line-name = "usb0_vbus_det";
+	};
+};
+
 /* Parent bus for CAM_I2C (SoM → FSUSB42 mux → both cameras) */
 &i2c52 {
 	status = "okay";
