@@ -602,6 +602,95 @@ picocom -b 115200 /dev/ttyUSB1   # example
 
 You may need `dialout` (`newgrp dialout` or re-login after `usermod -aG dialout $USER`).
 
+### I2C0 / I2C1 (carrier)
+
+Modalix level-shifts **I2C0** and **I2C1** on the SoM (1.8 V SoC ↔ 3.3 V gold finger,
+open-drain). JAJ pulls both buses up to **3.3 V**. Naming matches the SiMa DevKit /
+Jetson-style 40-pin silk.
+
+| SoM name | SODIMM | SIO | DT node | Typical Linux | JAJ access | Notes |
+|----------|--------|-----|---------|---------------|------------|--------|
+| **I2C0** | 185 SCL / 187 SDA | SIO0[0]/[1] | **`i2c00`** | **`/dev/i2c-0`** (confirm with script) | **J36** pins 4/5 (silk *UART2/I2C0*); Jetson 40-pin **27/28** style I2C0 | FUSB301 **0x25** is on this controller in stock DT — always expect that address on-bus |
+| **I2C1** | 189 SCL / 191 SDA | SIO0[2]/[3] | **`i2c01`** | **`/dev/i2c-1`** | Jetson 40-pin **3/5** style I2C1 | **Do not** apply SiMa `modalix-som-devkit-uart01` — it remuxes these pins as UART |
+| **CAM_I2C** | cam bus | SIO5 | **`i2c52`** | **`/dev/i2c-4`** | FSUSB42 → CAM0/CAM1 | Dual IMX219 @ 0x10 behind mux |
+| **I2C2** | 232 SCL / 234 SDA | SIO0[4]/[5] | **`i2c02`** | varies | 1.8 V on finger (not the same 3.3 V treatment as 0/1) | Secondary |
+
+`ark-jaj.dtbo` sets `status = "okay"` and `clock-frequency = <400000>` on `i2c00` /
+`i2c01` / `i2c02`. Redeploy if the board was last flashed without that overlay:
+
+```bash
+BOARD=sima@192.168.7.50 ./scripts/deploy-jaj-dtbo.sh --reboot
+```
+
+#### Bench test (tomorrow)
+
+Host → board (needs `i2c-tools` on target; deploy script installs it if missing):
+
+```bash
+# copy and run on target
+scp scripts/i2c-jaj-test.sh sima@192.168.7.50:/tmp/
+ssh sima@192.168.7.50 'echo edgeai | sudo -S bash /tmp/i2c-jaj-test.sh'
+```
+
+Or on the board as root:
+
+```bash
+sudo bash /path/to/i2c-jaj-test.sh
+# optional: scan only one mapped bus
+sudo I2C_BUS=0 bash /path/to/i2c-jaj-test.sh
+```
+
+**Pass criteria**
+
+1. **Map** — script prints which `/dev/i2c-N` is `i2c00` / `i2c01` (via sysfs of_node).
+2. **I2C0** — `i2cdetect` shows **0x25** (FUSB301). Optional: plug a 3.3 V I2C device
+   (e.g. EEPROM 0x50–0x57) on **J36 I2C0** or 40-pin I2C0 and see a new address.
+3. **I2C1** — bus responds to `i2cdetect` (may be empty). Plug a known 3.3 V target on
+   **40-pin I2C1** (pins 3 = SDA, 5 = SCL, 6 = GND, 1 or 17 = 3.3 V) and confirm ACK.
+4. **CAM** — with cameras attached, `i2cdetect` on the CAM parent/`i2c-4` path or
+   `dmesg | grep imx219` (NACK without modules is OK).
+
+**Do not** use the SiMa AlternateUARTs `uart01` overlay while validating I2C1.
+
+#### On-board I2C1 devices (INA238 + unique ID)
+
+| Addr | Part | Role |
+|------|------|------|
+| **0x45** | **INA238** (A0=A1=1) | VBAT power monitor; **R14 = 1 mΩ** shunt |
+| **0x50** | **AT24CSW010** | 1 Kbit EEPROM (user memory) |
+| **0x58** | AT24CSW security window | Factory **128-bit unique ID** @ word **0x80** |
+
+Userspace publisher (works without `CONFIG_SENSORS_INA238`):
+
+```bash
+# installed by deploy-jaj-dtbo.sh
+sudo systemctl enable --now ark-jaj-sys-power.service
+# or one-shot:
+sudo /usr/local/sbin/ark-jaj-sys-power.py once
+```
+
+Sys power data (updated ~1 Hz by the daemon):
+
+```bash
+cat /run/ark-jaj/sys-power/voltage_uV   # bus voltage
+cat /run/ark-jaj/sys-power/current_uA
+cat /run/ark-jaj/sys-power/power_uW
+cat /run/ark-jaj/sys-power/temp_mC
+cat /run/ark-jaj/board/unique_id        # 32 hex chars
+```
+
+`ark-jaj.dtso` declares `ti,ina238@45` and `eeprom@50` on `i2c01`. In-kernel hwmon is
+enabled via `recipes-kernel/linux/files/ina238.cfg` (`CONFIG_SENSORS_INA238=m`) on
+`linux-simaai`. After a kernel rebuild/flash:
+
+```bash
+modprobe ina238   # or auto-bind from DT
+ls /sys/class/hwmon/
+# expect ina238: in1_input (bus mV), curr1_input (mA), power1_input (µW), temp1_input (m°C)
+```
+
+Until that image is on the board, the userspace path above still works.
+
 ## Parallel map to ark_jetson_kernel
 
 | Concern | Jetson JAJ | Modalix JAJ |
@@ -616,6 +705,7 @@ You may need `dialout` (`newgrp dialout` or re-login after `usermod -aG dialout 
 | Linux serial console | Often carrier **UART2** | **UART1** via SoM **USB-C** FTDI |
 | Carrier generic UART | — | **UART0** → `/dev/ttyS1` (verified TX/RX); **UART1 header J6** works with the two data wires swapped + a 3V3 pull-up on pin 3, or use `uart13` → `/dev/ttyS2` on J6 pins 5/4 |
 | JAJ silk “UART2” | Linux debug (typical) | **tRoot only** on Modalix |
+| I2C0 / I2C1 | Jetson 40-pin + headers | **Enabled** in `ark-jaj.dtbo` (`i2c00`/`i2c01`); SoM level-shifts to 3.3 V; test with `scripts/i2c-jaj-test.sh` |
 | CAN | SoM CAN → JAJ TJA1051 | **No CAN on Modalix SoM** (see below) |
 
 ### CAN (JAJ transceiver vs Modalix SoM)
@@ -660,4 +750,6 @@ prefer a real controller over bit-bang).
 | Board hangs after UART traffic (no eth/SSH/USB-C) | Wire-speed UART flood — see the hazard note. Use light `printf` or paced `spam`; power-cycle to recover |
 | Can't reach the board over Ethernet | Host may be dual-homed on `192.168.7.0/24` (wired + wifi); wifi often can't reach it. Force the wired NIC: `ping -I enp5s0 192.168.7.50` |
 | UART0 works without FC, fails with `crtscts` | Expected — RTS/CTS not pinmuxed; use **`-crtscts`** |
+| I2C0/I2C1 silent | Redeploy `ark-jaj.dtbo`; `sudo ./scripts/i2c-jaj-test.sh`. I2C0 should show **0x25** (FUSB). I2C1 empty until a device is attached on 40-pin 3/5. Do not load SiMa **uart01** overlay (steals I2C1). |
+| I2C bus numbers not 0/1 | Use script mapping (aliases → `/dev/i2c-N`); do not hard-code bus numbers across images |
 | JAJ CAN connector silent on Modalix | Expected — SoM pins 143/145 **N/A**; TJA1051 not driven; use USB/SPI CAN |

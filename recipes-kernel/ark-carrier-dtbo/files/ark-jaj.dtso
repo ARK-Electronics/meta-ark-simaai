@@ -31,6 +31,21 @@
  *   - UART_B (SODIMM 236/238, JAJ silk “UART2”): tRoot only, not a Linux tty.
  *
  * USB-C: FUSB301 @ i2c00 0x25 (see ark-jaj-usb-init.sh for dual-role)
+ *
+ * I2C (005-HW-32 Table 2-8 — module level-shifts I2C0/I2C1 to 3.3 V open-drain):
+ *   - I2C0: SODIMM 185 SCL / 187 SDA = SIO0[0]/[1] → DT &i2c00 (typically /dev/i2c-0)
+ *     JAJ: 3.3 V pull-ups; J36 pins 4/5 (silk UART2/I2C0) as I2C0_SCL/SDA_EXT;
+ *     also the Jetson-style 40-pin I2C0 pair (DevKit names pins 27/28).
+ *     FUSB301 @ 0x25 lives on this controller in stock Modalix DT — expect 0x25 on
+ *     i2cdetect for i2c00 even with nothing on the carrier header.
+ *   - I2C1: SODIMM 189 SCL / 191 SDA = SIO0[2]/[3] → DT &i2c01 (typically /dev/i2c-1)
+ *     JAJ: 2.2 kΩ to 3.3 V; Jetson-style 40-pin I2C1 (DevKit names pins 3/5).
+ *     Do NOT load SiMa modalix-som-devkit-uart01 (re-muxes those pins as UART).
+ *   - CAM_I2C: separate bus i2c52 (/dev/i2c-4) → FSUSB42 → dual IMX219 @ 0x10
+ *   - I2C2: SODIMM 232/234 @ 1.8 V (not level-shifted like 0/1) — &i2c02 enabled
+ *     for completeness; not the primary carrier test path.
+ *
+ * Bench: scripts/i2c-jaj-test.sh  (see docs/bringup-jaj.md § I2C0 / I2C1)
  */
 
 /dts-v1/;
@@ -275,7 +290,10 @@
 /* ---- Remove old wrong sensors on i2c00/i2c01 if re-applied ---- */
 /* (fresh overlay replaces nodes only for targets we touch) */
 
-/* FUSB301 Type-C on i2c00 (USB2 debug FTDI is separate on SoM) */
+/*
+ * Gold-finger I2C0 (SIO0 pins 0–1). Stock Modalix also places FUSB301 here.
+ * Keep 400 kHz; external EEPROMs/sensors on J36 or 40-pin I2C0 share this bus.
+ */
 &i2c00 {
 	status = "okay";
 	clock-frequency = <400000>;
@@ -297,11 +315,44 @@
 	};
 };
 
+/*
+ * Gold-finger I2C1 (SIO0 pins 2–3) — carrier / 40-pin I2C1.
+ * Must stay I2C function (not uart01 alternate overlay).
+ *
+ * On-board:
+ *   INA238 @ 0x45 (A0=A1=1) — VBAT power monitor, R14 = 1 mΩ shunt
+ *   AT24CSW010 @ 0x50 (+ security 0x58) — unique ID for board serial
+ * Kernel: prefer CONFIG_SENSORS_INA238; until then userspace
+ *   scripts/ark-jaj-sys-power.py → /run/ark-jaj/sys-power/
+ */
 &i2c01 {
 	status = "okay";
 	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* shunt-resistor is in micro-ohms (1 mΩ = 1000) */
+	jaj_ina238: ina238@45 {
+		compatible = "ti,ina238";
+		reg = <0x45>;
+		shunt-resistor = <1000>;
+		status = "okay";
+	};
+
+	/*
+	 * Memory at 0x50; factory serial is on the security address 0x58
+	 * (see ark-jaj-sys-power.py). at24 binds the memory window.
+	 */
+	jaj_id_eeprom: eeprom@50 {
+		compatible = "atmel,24c01";
+		reg = <0x50>;
+		pagesize = <16>;
+		size = <128>;
+		status = "okay";
+	};
 };
 
+/* I2C2 gold finger @ 1.8 V (SIO0 pins 4–5) — optional; primary tests use 0/1 */
 &i2c02 {
 	status = "okay";
 	clock-frequency = <400000>;

@@ -1,0 +1,13 @@
+[Unit]
+Description=ARK JAJ system power (INA238) and board unique ID (AT24CSW010)
+After=local-fs.target
+# I2C adapters are available early; no network dependency
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/ark-jaj-sys-power.py daemon --interval 1
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

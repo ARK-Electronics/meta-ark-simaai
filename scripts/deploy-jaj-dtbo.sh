@@ -12,6 +12,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DTSO="$REPO_DIR/recipes-kernel/ark-carrier-dtbo/files/ark-jaj.dtso"
 UART1_PROBE="$REPO_DIR/scripts/uart1-tx-probe.sh"
+SYS_POWER_PY="$REPO_DIR/scripts/ark-jaj-sys-power.py"
+SYS_POWER_SVC="$REPO_DIR/scripts/ark-jaj-sys-power.service"
+I2C_TEST="$REPO_DIR/scripts/i2c-jaj-test.sh"
 BOARD="${BOARD:-sima@192.168.7.50}"
 PASSWORD="${PASSWORD:-edgeai}"
 REBOOT=0
@@ -52,7 +55,9 @@ echo "==> Source: $DTSO"
 REMOTE_DIR=/tmp/ark-jaj-dtbo
 ssh_ "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
 scp_ "$DTSO" "$BOARD:$REMOTE_DIR/ark-jaj.dtso"
-scp_ "$UART1_PROBE" "$BOARD:$REMOTE_DIR/"
+[[ -f "$UART1_PROBE" ]] && scp_ "$UART1_PROBE" "$BOARD:$REMOTE_DIR/" || true
+scp_ "$SYS_POWER_PY" "$SYS_POWER_SVC" "$BOARD:$REMOTE_DIR/"
+[[ -f "$I2C_TEST" ]] && scp_ "$I2C_TEST" "$BOARD:$REMOTE_DIR/" || true
 
 # USB init (FUSB301 dual-role + SuperSpeed PM) — works without full kernel TCPM
 USB_INIT="$REPO_DIR/scripts/ark-jaj-usb-init.sh"
@@ -72,16 +77,22 @@ cp -f /boot/boot-0/ark-jaj.dtbo /boot/boot-0/overlays/ 2>/dev/null || true
 cp -f /boot/boot-1/ark-jaj.dtbo /boot/boot-1/overlays/ 2>/dev/null || true
 install -d /usr/local/sbin
 install -m 0755 $REMOTE_DIR/ark-jaj-usb-init.sh /usr/local/sbin/ark-jaj-usb-init.sh
-install -m 0755 $REMOTE_DIR/uart1-tx-probe.sh /usr/local/sbin/uart1-tx-probe.sh
+[ -f $REMOTE_DIR/uart1-tx-probe.sh ] && install -m 0755 $REMOTE_DIR/uart1-tx-probe.sh /usr/local/sbin/uart1-tx-probe.sh || true
+[ -f $REMOTE_DIR/i2c-jaj-test.sh ] && install -m 0755 $REMOTE_DIR/i2c-jaj-test.sh /usr/local/sbin/i2c-jaj-test.sh || true
+install -m 0755 $REMOTE_DIR/ark-jaj-sys-power.py /usr/local/sbin/ark-jaj-sys-power.py
 install -m 0644 $REMOTE_DIR/ark-jaj-usb.service /etc/systemd/system/ark-jaj-usb.service
+install -m 0644 $REMOTE_DIR/ark-jaj-sys-power.service /etc/systemd/system/ark-jaj-sys-power.service
 # Prefer i2c-tools for FUSB programming
 command -v i2cget >/dev/null || apt-get install -y i2c-tools 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable ark-jaj-usb.service
+systemctl enable ark-jaj-sys-power.service
 # Apply immediately (pre-reboot) so USB-C dual-role is live now
 /usr/local/sbin/ark-jaj-usb-init.sh || true
+# Start power publisher now (no reboot required for userspace path)
+systemctl restart ark-jaj-sys-power.service || /usr/local/sbin/ark-jaj-sys-power.py once || true
 sync
-ls -la /boot/boot-0/ark-jaj.dtbo /usr/local/sbin/ark-jaj-usb-init.sh
+ls -la /boot/boot-0/ark-jaj.dtbo /usr/local/sbin/ark-jaj-usb-init.sh /usr/local/sbin/ark-jaj-sys-power.py
 '"
 
 echo "==> Configuring U-Boot env (dtbos=ark-jaj.dtbo)"
