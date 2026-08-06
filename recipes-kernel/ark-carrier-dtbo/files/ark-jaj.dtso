@@ -358,6 +358,28 @@
 	clock-frequency = <400000>;
 };
 
+/*
+ * Gold-finger SPI0 (dedicated NVS SPI0, not SIO SPI).
+ * SODIMM 89 MOSI / 91 SCK / 93 MISO / 95 CS0# / 97 CS1# @ 1.8 V on the module;
+ * JAJ U35 level-shifts to 3.3 V on J21 (SPI header).
+ *
+ * SiMa: &nvs_spi0 = /nvs@0/spi@0x04088000 (bring-up guide §3.3.4).
+ * spidev on CS0 for userspace tests (e.g. Murata SCH16T-K10 SafeSPI).
+ */
+&nvs_spi0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* of_id matches spidev.ko alias; not a real Rohm part */
+	jaj_spidev0: spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		status = "okay";
+	};
+};
+
 &pcie0_rc {
 	status = "okay";
 };
