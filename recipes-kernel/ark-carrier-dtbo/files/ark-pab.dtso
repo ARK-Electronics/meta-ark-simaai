@@ -1,27 +1,463 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * ARK Jetson PAB Carrier with SiMa.ai Modalix SoM
+ *
+ * Cameras (schematic sheet 14 + Jetson PAB IMX219 Quad overlay):
+ *   - Shared CAM_I2C → TCA9546APWR @ 0x70 → CAM0..CAM3 @ 0x10
+ *   - 4× 2-lane RPi CSI FFCs: CAM0→CSI0, CAM1→CSI1, CAM2→CSI2, CAM3→CSI3
+ *   - CAM0/CAM1 PWDN: SiMa dual-cam pattern port5 GPIO6/7 held high
+ *   - CAM3_PWDN: SODIMM 130 = GPIO06 = port6 GPIO6 held high
+ *   - CAM2_PWDN: SODIMM 112 (Jetson dual-use; rely on carrier 3V3 pull-up)
+ *   - Linux: i2c52 = CAM_I2C parent; mux creates channels for each sensor
+ *
+ * UART (same gold-finger map as JAJ — see docs/bringup-jaj.md):
+ *   - UART1 = uart12 = ttyS0 (SoM USB-C FTDI console)
+ *   - UART0 = uart42 = ttyS1
+ *   - uart13 optional second port on UART1 RTS/CTS pins
+ *
+ * I2C:
+ *   - I2C0: FUSB301 @ 0x25 (Type-C on SoM path)
+ *   - I2C1: AT24CSW010 unique ID EEPROM @ 0x50 (PAB schematic)
+ *   - CAM_I2C: i2c52 → TCA9546
+ *
+ * SPI0: dedicated NVS SPI0 (nvs_spi0) → JAJ-style level-shifted SPI header
+ *   SODIMM 89/91/93/95/97 @ 1.8 V
+ *
+ * Known Modalix limits (same as JAJ): no Key E PCIe, no SoM CAN, Mini-DP
+ * is Jetson DP (not Modalix HDMI) — see docs.
+ */
+
 /dts-v1/;
 /plugin/;
 
+&{/} {
+	model = "ARK Jetson PAB with SiMa Modalix SoM";
+	compatible = "ark,jetson-pab", "simaai,modalix-som", "simaai,modalix";
+
+	pab_xclk0: pab-xclk0 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
+
+	pab_xclk1: pab-xclk1 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
+
+	pab_xclk2: pab-xclk2 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
+
+	pab_xclk3: pab-xclk3 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
+
+	ark_pab {
+		compatible = "ark,jetson-pab";
+		status = "okay";
+	};
+};
+
+/* ---- Camera PWDN enables ---- */
+&port5 {
+	cam0-pwdn-en {
+		gpio-hog;
+		gpios = <6 0>;
+		output-high;
+		line-name = "cam0_pwdn";
+	};
+
+	cam1-pwdn-en {
+		gpio-hog;
+		gpios = <7 0>;
+		output-high;
+		line-name = "cam1_pwdn";
+	};
+};
+
 /*
- * Placeholder overlay: ARK Jetson PAB
- *
- * Applied at runtime via U-Boot:
- *   setenv dtbos ark-pab.dtbo ; saveenv ; boot
- *
- * Replace fragments with real pinmux / CSI / I2C / PCIe / GPIO nodes
- * during hardware bring-up. Compatible string should match the base DTB.
+ * USB0_VBUS_DETn / FUSB INT path — same as JAJ: drop SoM output-low hog and
+ * bias the pad so open-drain INT_N can rise.
  */
+&{/sio@6/gpio@0x04061000/gpio@0/uart-hog} {
+	status = "disabled";
+};
 
-/ {
-	compatible = "simaai,modalix";
+&pins_gpio60_deafult {
+	bias-pull-up;
+	input-enable;
+};
 
-	fragment@0 {
-		target-path = "/";
-		__overlay__ {
-			ark_pab {
-				compatible = "ark,jetson-pab";
+&port6 {
+	gpio-line-names =
+		"usb0_vbus_det",
+		"gpio01",
+		"gpio02",
+		"gpio03",
+		"gpio04",
+		"gpio05",
+		"cam3_pwdn",	/* SODIMM 130 — CAM3_PWDN on PAB */
+		"gpio07";
+
+	usb0-vbus-det-hog {
+		gpio-hog;
+		gpios = <0 0>;
+		input;
+		line-name = "usb0_vbus_det";
+	};
+
+	cam3-pwdn-en {
+		gpio-hog;
+		gpios = <6 0>;
+		output-high;
+		line-name = "cam3_pwdn";
+	};
+};
+
+/* Parent bus for CAM_I2C → TCA9546 */
+&i2c52 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/*
+	 * TCA9546APWR @ 0x70 (A0–A2 low on PAB). Compatible with pca954x driver
+	 * (CONFIG_I2C_MUX_PCA954x=y on linux-simaai).
+	 */
+	cam_tca9546: i2c-mux@70 {
+		compatible = "nxp,pca9546", "ti,tca9546";
+		reg = <0x70>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		i2c-mux,deselect-on-exit;
+		status = "okay";
+
+		/* CAM0 — CSI0 / J28 */
+		i2c@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pab_imx219_0: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
 				status = "okay";
-				/* TODO: carrier peripherals (INA238, IMU, CAN, CSI, ...) */
+				clocks = <&pab_xclk0>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					pab_cam0_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi00in>;
+						clock-noncontinuous;
+					};
+				};
+			};
+		};
+
+		/* CAM1 — CSI1 / J25 */
+		i2c@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pab_imx219_1: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
+				status = "okay";
+				clocks = <&pab_xclk1>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					pab_cam1_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi10in>;
+						clock-noncontinuous;
+					};
+				};
+			};
+		};
+
+		/* CAM2 — CSI2 / J29 */
+		i2c@2 {
+			reg = <2>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pab_imx219_2: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
+				status = "okay";
+				clocks = <&pab_xclk2>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					pab_cam2_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi20in>;
+						clock-noncontinuous;
+					};
+				};
+			};
+		};
+
+		/* CAM3 — CSI3 / J27 */
+		i2c@3 {
+			reg = <3>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pab_imx219_3: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
+				status = "okay";
+				clocks = <&pab_xclk3>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					pab_cam3_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi30in>;
+						clock-noncontinuous;
+					};
+				};
 			};
 		};
 	};
+};
+
+/* ---- CSI0 (CAM0) + CSI1 (CAM1) + CSI2 (CAM2) + CSI3 (CAM3) ---- */
+
+&csi0 {
+	status = "okay";
+};
+
+&axi_vdma0 {
+	status = "okay";
+};
+
+&mipi_dphy_rx0 {
+	status = "okay";
+};
+
+&v4l2video0 {
+	status = "okay";
+};
+
+&v4l2vdma0 {
+	status = "okay";
+};
+
+&csi00in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&pab_cam0_ep>;
+	clock-noncontinuous;
+};
+
+&csi1 {
+	status = "okay";
+};
+
+&axi_vdma1 {
+	status = "okay";
+};
+
+&mipi_dphy_rx1 {
+	status = "okay";
+};
+
+&v4l2video1 {
+	status = "okay";
+};
+
+&v4l2vdma1 {
+	status = "okay";
+};
+
+&csi10in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&pab_cam1_ep>;
+	clock-noncontinuous;
+};
+
+&csi2 {
+	status = "okay";
+};
+
+&axi_vdma2 {
+	status = "okay";
+};
+
+&mipi_dphy_rx2 {
+	status = "okay";
+};
+
+&v4l2video2 {
+	status = "okay";
+};
+
+&v4l2vdma2 {
+	status = "okay";
+};
+
+&csi20in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&pab_cam2_ep>;
+	clock-noncontinuous;
+};
+
+&csi3 {
+	status = "okay";
+};
+
+&axi_vdma3 {
+	status = "okay";
+};
+
+&mipi_dphy_rx3 {
+	status = "okay";
+};
+
+&v4l2video3 {
+	status = "okay";
+};
+
+&v4l2vdma3 {
+	status = "okay";
+};
+
+&csi30in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&pab_cam3_ep>;
+	clock-noncontinuous;
+};
+
+/* ---- Host I2C / SPI / UART / PCIe ---- */
+
+&i2c00 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pab_fusb301: fusb301@25 {
+		compatible = "fcs,fusb301", "onnn,fusb301";
+		reg = <0x25>;
+		status = "okay";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "source";
+		};
+	};
+};
+
+&i2c01 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* PAB unique ID EEPROM (AT24CSW010) — memory @ 0x50, security @ 0x58 */
+	pab_id_eeprom: eeprom@50 {
+		compatible = "atmel,24c01";
+		reg = <0x50>;
+		pagesize = <16>;
+		size = <128>;
+		status = "okay";
+	};
+};
+
+&i2c02 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+/*
+ * Gold-finger SPI0 = NVS SPI0 (not SIO SPI).
+ * Same balls as Jetson SPI0; carrier level-shifts to 3.3 V SPI header.
+ */
+&nvs_spi0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pab_spidev0: spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		status = "okay";
+	};
+};
+
+&pcie0_rc {
+	status = "okay";
+};
+
+&pcie2_rc {
+	status = "okay";
+};
+
+&pcie3_rc {
+	status = "okay";
+};
+
+&xgmac0 {
+	status = "okay";
+};
+
+&uart12 {
+	status = "okay";
+};
+
+&uart13 {
+	status = "okay";
+};
+
+&{/aliases} {
+	serial0 = "/sio@1/uart@0x0401a000";
+	serial1 = "/sio@4/uart@0x0404a000";
+	serial2 = "/sio@1/uart@0x0401c000";
+};
+
+&uart42 {
+	status = "okay";
 };

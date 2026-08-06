@@ -13,7 +13,7 @@ Workflow mirrors [`ark_jetson_kernel`](https://github.com/ARK-Electronics/ark_je
 | MACHINE       | Carrier                         | Status      |
 |---------------|---------------------------------|-------------|
 | `ark-jaj`     | ARK Just a Jetson               | DT overlay live (eLxr) |
-| `ark-pab`     | ARK Jetson PAB Carrier          | Framework   |
+| `ark-pab`     | ARK Jetson PAB Carrier          | DT overlay live (eLxr) |
 | `ark-pab-v3`  | ARK Jetson PAB V3 Carrier       | Framework   |
 | `ark-can-pab` | ARK Jetson CAN PAB Carrier      | Framework   |
 
@@ -90,7 +90,8 @@ recipes-core/
 - Stock `modalix-som.dtb` is the default kernel DT until carrier DTs land.
 - JAJ overlay: `recipes-kernel/ark-carrier-dtbo/files/ark-jaj.dtso` (identity + dual CSI IMX219).
 - Deploy live: `./scripts/deploy-jaj-dtbo.sh --reboot` (see `docs/bringup-jaj.md`).
-- Other carriers still use placeholder overlays under the same recipe.
+- PAB overlay: `recipes-kernel/ark-carrier-dtbo/files/ark-pab.dtso` — deploy with `./scripts/deploy-pab-dtbo.sh --reboot` (see `docs/bringup-pab.md`).
+- Other carriers (PAB V3, CAN PAB) still use placeholder overlays.
 - U-Boot still uses the upstream Modalix board directory via `ARK_UBOOT_BOARD`.
 - Boot device is **on-SoM eMMC** by default; carrier NVMe is secondary storage
   (unlike Jetson `flash.sh` defaulting to NVMe root).
