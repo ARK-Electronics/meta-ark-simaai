@@ -17,6 +17,7 @@ SYS_POWER_SVC="$REPO_DIR/scripts/ark-jaj-sys-power.service"
 I2C_TEST="$REPO_DIR/scripts/i2c-jaj-test.sh"
 SPI_TEST="$REPO_DIR/scripts/spi-jaj-test.sh"
 SCH16T_C="$REPO_DIR/scripts/sch16t-spi-test.c"
+ICM42688_C="$REPO_DIR/scripts/icm42688-spi-test.c"
 BOARD="${BOARD:-sima@192.168.7.50}"
 PASSWORD="${PASSWORD:-edgeai}"
 REBOOT=0
@@ -62,6 +63,7 @@ scp_ "$SYS_POWER_PY" "$SYS_POWER_SVC" "$BOARD:$REMOTE_DIR/"
 [[ -f "$I2C_TEST" ]] && scp_ "$I2C_TEST" "$BOARD:$REMOTE_DIR/" || true
 [[ -f "$SPI_TEST" ]] && scp_ "$SPI_TEST" "$BOARD:$REMOTE_DIR/" || true
 [[ -f "$SCH16T_C" ]] && scp_ "$SCH16T_C" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$ICM42688_C" ]] && scp_ "$ICM42688_C" "$BOARD:$REMOTE_DIR/" || true
 
 # USB init (FUSB301 dual-role + SuperSpeed PM) — works without full kernel TCPM
 USB_INIT="$REPO_DIR/scripts/ark-jaj-usb-init.sh"
@@ -73,6 +75,10 @@ ssh_ "dtc -@ -I dts -O dtb -o $REMOTE_DIR/ark-jaj.dtbo $REMOTE_DIR/ark-jaj.dtso 
 if [[ -f "$SCH16T_C" ]]; then
     echo "==> Building sch16t-spi-test on target"
     ssh_ "gcc -O2 -Wall -o $REMOTE_DIR/sch16t-spi-test $REMOTE_DIR/sch16t-spi-test.c"
+fi
+if [[ -f "$ICM42688_C" ]]; then
+    echo "==> Building icm42688-spi-test on target"
+    ssh_ "gcc -O2 -Wall -o $REMOTE_DIR/icm42688-spi-test $REMOTE_DIR/icm42688-spi-test.c"
 fi
 
 echo "==> Installing DTBO + USB init into /boot and /usr/local"
@@ -89,6 +95,7 @@ install -m 0755 $REMOTE_DIR/ark-jaj-usb-init.sh /usr/local/sbin/ark-jaj-usb-init
 [ -f $REMOTE_DIR/i2c-jaj-test.sh ] && install -m 0755 $REMOTE_DIR/i2c-jaj-test.sh /usr/local/sbin/i2c-jaj-test.sh || true
 [ -f $REMOTE_DIR/spi-jaj-test.sh ] && install -m 0755 $REMOTE_DIR/spi-jaj-test.sh /usr/local/sbin/spi-jaj-test.sh || true
 [ -f $REMOTE_DIR/sch16t-spi-test ] && install -m 0755 $REMOTE_DIR/sch16t-spi-test /usr/local/sbin/sch16t-spi-test || true
+[ -f $REMOTE_DIR/icm42688-spi-test ] && install -m 0755 $REMOTE_DIR/icm42688-spi-test /usr/local/sbin/icm42688-spi-test || true
 install -m 0755 $REMOTE_DIR/ark-jaj-sys-power.py /usr/local/sbin/ark-jaj-sys-power.py
 install -m 0644 $REMOTE_DIR/ark-jaj-usb.service /etc/systemd/system/ark-jaj-usb.service
 install -m 0644 $REMOTE_DIR/ark-jaj-sys-power.service /etc/systemd/system/ark-jaj-sys-power.service

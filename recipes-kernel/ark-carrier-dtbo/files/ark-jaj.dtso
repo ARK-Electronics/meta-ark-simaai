@@ -380,6 +380,31 @@
 	};
 };
 
+/*
+ * Gold-finger SPI1 (NVS SPI1) — onboard ICM-42688-P Accel/Gyro (JAJ U7).
+ * SODIMM 104 MOSI / 106 SCK / 108 MISO / 110 CS0# @ 1.8 V on the module
+ * (no external header level-shift for the IMU path).
+ *
+ * SiMa: &nvs_spi1 = /nvs@0/spi@0x4089000. SPI1 is also used for SoM force-
+ * recovery QSPI when FORCE_RECOVERY is asserted — leave recovery deasserted
+ * for normal IMU use.
+ *
+ * WHO_AM_I @ 0x75 == 0x47 (ICM-42688-P). SPI mode 0/3, CS0 active-low.
+ */
+&nvs_spi1 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* CS0 = onboard ICM-42688-P; spidev until inv-icm42600 is in the image */
+	jaj_spidev1: spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		status = "okay";
+	};
+};
+
 &pcie0_rc {
 	status = "okay";
 };
