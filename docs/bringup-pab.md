@@ -86,7 +86,33 @@ See [bringup-jaj.md](bringup-jaj.md) for netboot / WIC details.
 
 Autopilot PAB bus, telem/GPS/CAN/PWM headers are on the **FMU** side of the
 carrier, not the Modalix SoM. Companion-computer work is Ethernet/UART/SPI/I2C/CSI
-as above; flight-controller flash is separate (PX4/ArduPilot on ARKV6X).
+as above; flight-controller flash is separate (PX4/ArduPilot on ARKV6X / ARKV6S).
+
+### FMU USB (ARKV6S / ARKV6X on `lsusb`)
+
+Jetson ↔ flight controller USB is a board-to-board path (`USB_FMU_*` via a mux
+shared with the Micro USB recovery port). For the FMU to enumerate:
+
+1. **`VBUS_SENSE_BOOTLOADER` high** — SODIMM **206** = Modalix **GPIO07** =
+   SIO6[7] (`&port6` line 7). Hogged **output-high** in `ark-pab.dtbo` (same role
+   as Jetson MB1 pinmux / ARK docs “Autopilot Connections”).
+2. **No Micro USB cable** on the recovery port — while that cable is plugged in,
+   the mux disconnects the FMU from the SoM; unplug and reboot if needed.
+3. Expect **`lsusb`** to show the ARK FC (and usually `/dev/ttyACM0`).
+
+Also hogged high at boot:
+
+| Net | SODIMM | Modalix | Purpose |
+|-----|--------|---------|---------|
+| `VBUS_SENSE_BOOTLOADER` | 206 | GPIO07 / SIO6[7] | FMU USB sense |
+| `USB2_USBSS0_VBUS_EN` | 218 | GPIO12 / SIO7[4] | USB-A J33 load switch (AP22615) |
+
+```bash
+# After reboot, hogs should show in debugfs:
+sudo cat /sys/kernel/debug/gpio | grep -E 'vbus|usbss0'
+lsusb
+ls -l /dev/ttyACM*
+```
 
 ## Troubleshooting
 
@@ -94,5 +120,6 @@ as above; flight-controller flash is separate (PX4/ArduPilot on ARKV6X).
 |---------|--------|
 | Still “Just a Jetson” model | `dtbos` still `ark-jaj.dtbo` — redeploy PAB script + reboot |
 | No `0x70` on CAM I2C | Power, FFC seating, `i2c52` status, TCA9546 reset |
+| No ARKV6S / no `/dev/ttyACM0` | `vbus_sense_bootloader` hog high? Micro USB unplugged? FMU seated and powered? |
 | Key E empty | Expected on Modalix |
 | Mini-DP no video | Expected — HDMI vs DP mismatch (see prior PAB notes) |

@@ -106,8 +106,8 @@
 		"gpio03",
 		"gpio04",
 		"gpio05",
-		"cam3_pwdn",	/* SODIMM 130 — CAM3_PWDN on PAB */
-		"gpio07";
+		"cam3_pwdn",		/* SODIMM 130 — CAM3_PWDN on PAB */
+		"vbus_sense_bl";	/* SODIMM 206 — VBUS_SENSE_BOOTLOADER (FMU USB) */
 
 	usb0-vbus-det-hog {
 		gpio-hog;
@@ -121,6 +121,45 @@
 		gpios = <6 0>;
 		output-high;
 		line-name = "cam3_pwdn";
+	};
+
+	/*
+	 * FMU USB enumerate: PAB wires SODIMM 206 (Modalix GPIO07 = SIO6[7]) to
+	 * VBUS_SENSE_BOOTLOADER → level-shift → DF40 VBUS_SENSE on the ARKV6x/V6S.
+	 * Jetson MB1 pinmux drives this high at boot; without it the FC never
+	 * presents as a USB device (/dev/ttyACM0). Active-high.
+	 * See docs/bringup-pab.md and ARK Jetson PAB “Autopilot Connections”.
+	 */
+	vbus-sense-bootloader-hog {
+		gpio-hog;
+		gpios = <7 0>;
+		output-high;
+		line-name = "vbus_sense_bootloader";
+	};
+};
+
+/*
+ * USB-A (J33) VBUS load switch: USB2_USBSS0_VBUS_EN = SODIMM 218 =
+ * Modalix GPIO12 = SIO7[4] → AP22615 EN (active-high). Jetson models this as
+ * regulator-boot-on; hog high so the port is powered without a USB PHY driver
+ * binding a vbus-supply.
+ */
+&port7 {
+	gpio-line-names =
+		"gpio08_fan_tach",
+		"gpio09_aud_mclk",
+		"gpio10",
+		"gpio11",
+		"usbss0_vbus_en",	/* SODIMM 218 — USB2_USBSS0_VBUS_EN */
+		"gpio13",
+		"gpio14_fan_pwm",
+		"gpio15";
+
+	usbss0-vbus-en-hog {
+		gpio-hog;
+		gpios = <4 0>;
+		output-high;
+		line-name = "usb2_usbss0_vbus_en";
 	};
 };
 
