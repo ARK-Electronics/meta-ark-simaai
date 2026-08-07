@@ -151,7 +151,7 @@
 		"gpio10",
 		"gpio11",
 		"usbss0_vbus_en",	/* SODIMM 218 — USB2_USBSS0_VBUS_EN */
-		"gpio13",
+		"fmu_rst_req",		/* SODIMM 228 — FMU_RST_REQ (keep low) */
 		"gpio14_fan_pwm",
 		"gpio15";
 
@@ -160,6 +160,20 @@
 		gpios = <4 0>;
 		output-high;
 		line-name = "usb2_usbss0_vbus_en";
+	};
+
+	/*
+	 * FMU_RST_REQ_1V8 = SODIMM 228 = GPIO13 = SIO7[5].
+	 * Level-shifted to FMU_RST_REQ_3V3 → open-drain NAND → FMU_nRST.
+	 * Must stay low in normal run so the companion is not requesting a
+	 * flight-controller reset. Carrier also has a 1V8 pulldown; drive low
+	 * explicitly so a floating/muxed pad cannot assert reset.
+	 */
+	fmu-rst-req-hog {
+		gpio-hog;
+		gpios = <5 0>;
+		output-low;
+		line-name = "fmu_rst_req";
 	};
 };
 

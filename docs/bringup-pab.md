@@ -104,8 +104,9 @@ Also hogged high at boot:
 
 | Net | SODIMM | Modalix | Purpose |
 |-----|--------|---------|---------|
-| `VBUS_SENSE_BOOTLOADER` | 206 | GPIO07 / SIO6[7] | FMU USB sense |
-| `USB2_USBSS0_VBUS_EN` | 218 | GPIO12 / SIO7[4] | USB-A J33 load switch (AP22615) |
+| `VBUS_SENSE_BOOTLOADER` | 206 | GPIO07 / SIO6[7] | FMU USB sense (drive **high**) |
+| `USB2_USBSS0_VBUS_EN` | 218 | GPIO12 / SIO7[4] | USB-A J33 load switch (drive **high**) |
+| `FMU_RST_REQ` | 228 | GPIO13 / SIO7[5] | FC reset request (drive **low**; high asserts reset path) |
 
 ```bash
 # After reboot, hogs should show in debugfs:
