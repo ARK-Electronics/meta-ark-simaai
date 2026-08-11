@@ -14,7 +14,7 @@ Workflow mirrors [`ark_jetson_kernel`](https://github.com/ARK-Electronics/ark_je
 |---------------|---------------------------------|-------------|
 | `ark-jaj`     | ARK Just a Jetson               | DT overlay live (eLxr) |
 | `ark-pab`     | ARK Jetson PAB Carrier          | DT overlay live (eLxr) |
-| `ark-pab-v3`  | ARK Jetson PAB V3 Carrier       | Framework   |
+| `ark-pab-v3`  | ARK Jetson PAB V3 Carrier       | DT overlay live (eLxr) |
 | `ark-can-pab` | ARK Jetson CAN PAB Carrier      | Framework   |
 
 All machines inherit Modalix SoM defaults from `meta-simaai` and layer
@@ -91,7 +91,8 @@ recipes-core/
 - JAJ overlay: `recipes-kernel/ark-carrier-dtbo/files/ark-jaj.dtso` (identity + dual CSI IMX219).
 - Deploy live: `./scripts/deploy-jaj-dtbo.sh --reboot` (see `docs/bringup-jaj.md`).
 - PAB overlay: `recipes-kernel/ark-carrier-dtbo/files/ark-pab.dtso` — deploy with `./scripts/deploy-pab-dtbo.sh --reboot` (see `docs/bringup-pab.md`).
-- Other carriers (PAB V3, CAN PAB) still use placeholder overlays.
+- PAB V3 overlay: `ark-pab-v3.dtso` (KSZ8795 `SWITCH_RSTn`, dual CSI0/CSI2) — `./scripts/deploy-pab-v3-dtbo.sh --reboot` (serial: `--serial /dev/ttyUSB1`; see `docs/bringup-pab-v3.md`). FC links: USB + Ethernet OK; **UART1/Telem2 N/A** on current Modalix SoM rev.
+- CAN PAB still uses a placeholder overlay.
 - U-Boot still uses the upstream Modalix board directory via `ARK_UBOOT_BOARD`.
 - Boot device is **on-SoM eMMC** by default; carrier NVMe is secondary storage
   (unlike Jetson `flash.sh` defaulting to NVMe root).

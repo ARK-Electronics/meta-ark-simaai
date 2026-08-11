@@ -1,27 +1,422 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * ARK Jetson PAB Carrier V3 with SiMa.ai Modalix SoM
+ *
+ * Hardware: ARK Jetson PAB Carrier V3 Rev 3.0 schematic + Modalix 005-HW-32 pin map.
+ * Jetson product counterpart: ark_jetson_kernel products/PAB_V3 (dual IMX219, KSZ8795).
+ *
+ * Cameras (schematic sheet 14 — dual CSI, FSUSB42 like JAJ, not PAB quad/TCA9546):
+ *   - Shared CAM_I2C → FSUSB42UMX (U11) → CAM0 / CAM1 @ 0x10
+ *   - CAM_MUX_SEL = SODIMM 130 = GPIO06 = port6 line 6
+ *   - CAM0/CAM1 PWDN = port5 GPIO6/7 held high (SiMa dual-cam pattern; SODIMM 114/120)
+ *   - CAM0 (J28) 2-lane → CSI0 D0/D1/CLK
+ *   - CAM1 (J25) 2-lane → CSI2 D0/D1/CLK
+ *   - Linux: i2c52 = CAM_I2C parent
+ *
+ * On-board Ethernet switch (KSZ8795CLX, sheet 15) — critical for carrier GbE:
+ *   - SWITCH_RSTn = SODIMM 211 = GPIO09_AUD_MCLK = SIO7[1] = port7 line 1
+ *     Active-low; drive HIGH to release KSZ8795 from reset (Jetson MB1 holds AC.06 high).
+ *   - SW_PMEn     = SODIMM 216 = GPIO11 = SIO7[3] = port7 line 3 → KSZ PME_N (10k)
+ *     Drive HIGH so PME stays deasserted.
+ *   - SPI1 (SODIMM 104/106/108/110) is the switch MDIO/SPI management path on Jetson;
+ *     leave unmanaged for bring-up (switch works without host SPI once out of reset).
+ *   - SoM RGMII → switch port 1; external / payload / FMU ports hang off the switch.
+ *
+ * FMU / USB (same PAB family nets as ark-pab.dtso):
+ *   - VBUS_SENSE_BOOTLOADER = SODIMM 206 = GPIO07 = port6 line 7 → output-high
+ *   - FMU_RST_REQ           = SODIMM 228 = GPIO13 = port7 line 5 → output-low
+ *   - No USB2_USBSS0_VBUS_EN net on V3 (USB-A path differs from PAB Rev3).
+ *
+ * UART / I2C / SPI (gold-finger, same as JAJ/PAB):
+ *   - UART1 = uart12 = ttyS0 (SoM USB-C FTDI console only on this SoM rev)
+ *   - UART0 = uart42 = ttyS1
+ *   - I2C0: FUSB301 @ 0x25
+ *   - I2C1: AT24CSW010 unique ID EEPROM @ 0x50 (security @ 0x58)
+ *   - SPI0: nvs_spi0 header spidev
+ *
+ * FC link matrix (Modalix SoM rev used for bring-up — see docs/bringup-pab-v3.md):
+ *   - USB (VBUS_SENSE_BOOTLOADER hog) — works → /dev/ttyACM0
+ *   - Ethernet via KSZ8795 — works (FC should use DHCP on same LAN as SoM)
+ *   - UART1 → FC Telem2 — NOT available on this Modalix SoM revision
+ */
+
 /dts-v1/;
 /plugin/;
 
-/*
- * Placeholder overlay: ARK Jetson PAB V3
- *
- * Applied at runtime via U-Boot:
- *   setenv dtbos ark-pab-v3.dtbo ; saveenv ; boot
- *
- * Replace fragments with real pinmux / CSI / I2C / PCIe / GPIO nodes
- * during hardware bring-up. Compatible string should match the base DTB.
- */
+&{/} {
+	model = "ARK Jetson PAB V3 with SiMa Modalix SoM";
+	compatible = "ark,jetson-pab-v3", "simaai,modalix-som", "simaai,modalix";
 
-/ {
-	compatible = "simaai,modalix";
+	pabv3_xclk0: pabv3-xclk0 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
 
-	fragment@0 {
-		target-path = "/";
-		__overlay__ {
-			ark_pab_v3 {
-				compatible = "ark,jetson-pab-v3";
+	pabv3_xclk1: pabv3-xclk1 {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+		status = "okay";
+	};
+
+	ark_pab_v3 {
+		compatible = "ark,jetson-pab-v3";
+		status = "okay";
+	};
+
+	/*
+	 * Dual IMX219 @ 0x10 behind FSUSB42 (same pattern as ark-jaj.dtso).
+	 * Must be a root node with i2c-parent, not a child of i2c52.
+	 */
+	cam_i2cmux: i2cmux {
+		compatible = "i2c-mux-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		i2c-parent = <&i2c52>;
+		/* CAM_MUX_SEL: SODIMM 130 = GPIO06 = port6 line 6 */
+		mux-gpios = <&port6 6 0>;
+		idle-state = <0>;
+
+		/* CAM0 — CSI0 / J28 */
+		i2c@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pabv3_imx219_0: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
 				status = "okay";
-				/* TODO: carrier peripherals (INA238, IMU, CAN, CSI, ...) */
+				clocks = <&pabv3_xclk0>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					pabv3_cam0_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi00in>;
+						clock-noncontinuous;
+					};
+				};
+			};
+		};
+
+		/* CAM1 — CSI2 / J25 */
+		i2c@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			pabv3_imx219_1: imx219@10 {
+				compatible = "sony,imx219";
+				reg = <0x10>;
+				status = "okay";
+				clocks = <&pabv3_xclk1>;
+				clock-names = "xclk";
+				rotation = <180>;
+				orientation = <2>;
+
+				port {
+					pabv3_cam1_ep: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <456000000>;
+						remote-endpoint = <&csi20in>;
+						clock-noncontinuous;
+					};
+				};
 			};
 		};
 	};
+};
+
+/* ---- Camera PWDN enables (port5) ---- */
+&port5 {
+	cam0-pwdn-en {
+		gpio-hog;
+		gpios = <6 0>;
+		output-high;
+		line-name = "cam0_pwdn";
+	};
+
+	cam1-pwdn-en {
+		gpio-hog;
+		gpios = <7 0>;
+		output-high;
+		line-name = "cam1_pwdn";
+	};
+};
+
+/*
+ * USB0_VBUS_DETn — drop SoM output-low hog; bias as input with pull-up
+ * (same FUSB INT_N story as JAJ/PAB).
+ */
+&{/sio@6/gpio@0x04061000/gpio@0/uart-hog} {
+	status = "disabled";
+};
+
+&pins_gpio60_deafult {
+	bias-pull-up;
+	input-enable;
+};
+
+&port6 {
+	gpio-line-names =
+		"usb0_vbus_det",
+		"gpio01",
+		"gpio02",
+		"gpio03",
+		"gpio04",
+		"gpio05",
+		"cam_mux_sel",		/* SODIMM 130 — FSUSB42 SEL, owned by cam_i2cmux */
+		"vbus_sense_bl";	/* SODIMM 206 — VBUS_SENSE_BOOTLOADER (FMU USB) */
+
+	usb0-vbus-det-hog {
+		gpio-hog;
+		gpios = <0 0>;
+		input;
+		line-name = "usb0_vbus_det";
+	};
+
+	/*
+	 * FMU USB enumerate: SODIMM 206 = GPIO07 = SIO6[7].
+	 * Active-high VBUS_SENSE_BOOTLOADER for ARKV6x/V6S.
+	 */
+	vbus-sense-bootloader-hog {
+		gpio-hog;
+		gpios = <7 0>;
+		output-high;
+		line-name = "vbus_sense_bootloader";
+	};
+};
+
+/*
+ * port7 = SIO7 = GPIO08..GPIO15 (Modalix Table 3-2).
+ * PAB V3 critical carrier enables live here.
+ */
+&port7 {
+	gpio-line-names =
+		"gpio08_fan_tach",	/* SODIMM 208 */
+		"switch_rst_n",		/* SODIMM 211 — KSZ8795 RST_N (active-low) */
+		"gpio10",		/* SODIMM 212 */
+		"sw_pmen",		/* SODIMM 216 — KSZ PME_N / SW_PMEn */
+		"gpio12",		/* SODIMM 218 */
+		"fmu_rst_req",		/* SODIMM 228 — FMU_RST_REQ (keep low) */
+		"gpio14_fan_pwm",	/* SODIMM 230 */
+		"gpio15";
+
+	/*
+	 * KSZ8795CLX RST_N (sheet 15 pin 77). Active-low; must be high for the
+	 * switch to forward SoM RGMII to the external RJ45 / payload / FMU ports.
+	 * Without this hog, end0 stays down on stock Modalix + JAJ/PAB overlays.
+	 */
+	switch-rst-n-hog {
+		gpio-hog;
+		gpios = <1 0>;
+		output-high;
+		line-name = "switch_rst_n";
+	};
+
+	/* Hold PME_N deasserted (active-low). */
+	sw-pmen-hog {
+		gpio-hog;
+		gpios = <3 0>;
+		output-high;
+		line-name = "sw_pmen";
+	};
+
+	/*
+	 * FMU_RST_REQ_1V8 = SODIMM 228 = GPIO13 = SIO7[5].
+	 * Stay low so the companion is not requesting an FC reset.
+	 */
+	fmu-rst-req-hog {
+		gpio-hog;
+		gpios = <5 0>;
+		output-low;
+		line-name = "fmu_rst_req";
+	};
+};
+
+/* Parent bus for CAM_I2C (SoM → FSUSB42 → both cameras) */
+&i2c52 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+/* ---- CSI0 (CAM0/J28) + CSI2 (CAM1/J25) — PAB V3 wiring (not JAJ CSI1/CSI2) ---- */
+
+&csi0 {
+	status = "okay";
+};
+
+&axi_vdma0 {
+	status = "okay";
+};
+
+&mipi_dphy_rx0 {
+	status = "okay";
+};
+
+&v4l2video0 {
+	status = "okay";
+};
+
+&v4l2vdma0 {
+	status = "okay";
+};
+
+&csi00in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&pabv3_cam0_ep>;
+	clock-noncontinuous;
+};
+
+/* CSI1 unused for dual-cam V3 layout */
+&csi1 {
+	status = "disabled";
+};
+
+&csi2 {
+	status = "okay";
+};
+
+&axi_vdma2 {
+	status = "okay";
+};
+
+&mipi_dphy_rx2 {
+	status = "okay";
+};
+
+&v4l2video2 {
+	status = "okay";
+};
+
+&v4l2vdma2 {
+	status = "okay";
+};
+
+&csi20in {
+	clock-lanes = <0>;
+	data-lanes = <1 2>;
+	link-frequencies = /bits/ 64 <456000000>;
+	remote-endpoint = <&pabv3_cam1_ep>;
+	clock-noncontinuous;
+};
+
+/* ---- Host I2C / SPI / UART / PCIe / Ethernet MAC ---- */
+
+&i2c00 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pabv3_fusb301: fusb301@25 {
+		compatible = "fcs,fusb301", "onnn,fusb301";
+		reg = <0x25>;
+		status = "okay";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "source";
+		};
+	};
+};
+
+&i2c01 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* AT24CSW010 unique ID — memory @ 0x50, security window @ 0x58 */
+	pabv3_id_eeprom: eeprom@50 {
+		compatible = "atmel,24c01";
+		reg = <0x50>;
+		pagesize = <16>;
+		size = <128>;
+		status = "okay";
+	};
+};
+
+&i2c02 {
+	status = "okay";
+	clock-frequency = <400000>;
+};
+
+&nvs_spi0 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pabv3_spidev0: spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		status = "okay";
+	};
+};
+
+/*
+ * NVS SPI1 is the Jetson SPI1 path used for KSZ8795 management on PAB_V3.
+ * Leave as spidev for optional userspace switch config; unmanaged switch
+ * still forwards frames once SWITCH_RSTn is released.
+ */
+&nvs_spi1 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pabv3_spidev1: spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		status = "okay";
+	};
+};
+
+&pcie0_rc {
+	status = "okay";
+};
+
+&pcie2_rc {
+	status = "okay";
+};
+
+&pcie3_rc {
+	status = "okay";
+};
+
+/* SoM RGMII MAC into the KSZ8795 */
+&xgmac0 {
+	status = "okay";
+};
+
+&uart12 {
+	status = "okay";
+};
+
+&uart13 {
+	status = "okay";
+};
+
+&{/aliases} {
+	serial0 = "/sio@1/uart@0x0401a000";
+	serial1 = "/sio@4/uart@0x0404a000";
+	serial2 = "/sio@1/uart@0x0401c000";
+};
+
+&uart42 {
+	status = "okay";
 };
