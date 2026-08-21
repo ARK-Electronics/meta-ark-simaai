@@ -61,8 +61,9 @@ ls /sys/bus/i2c/devices/ | grep -E '0025|0050'
 sudo i2ctransfer -y 1 w1@0x58 0x80 r16   # 128-bit factory ID
 ```
 
-KSZ `SWITCH_RSTn` / `SW_PMEn` and `FMU_RST_REQ` are **Linux gpio-hogs on
-port7** (`ark-pab-v3.dtbo`). `gpio70` is already enabled in
+KSZ `SWITCH_RSTn` / `SW_PMEn` are **Linux gpio-hogs on port7**
+(`ark-pab-v3.dtbo`). `FMU_RST_REQ` is named `fmu_rst_req` (SIO7 line 5)
+so userspace can pulse it; it is **not** hogged. `gpio70` is already enabled in
 `modalix-som_16g.dtb`. `VBUS_SENSE_BOOTLOADER` is a **port6** hog
 (SIO6[7] output-high) so the ARKV6X enumerates on USB at boot. Do **not**
 hog CAM PWDN or FUSB `INT_N` (SIO6[0]) in the same overlay — those plus
@@ -193,7 +194,7 @@ Verified on **Modalix SoM + PAB V3** with ARKV6X (`3185:0039`):
 | Net | SODIMM | Modalix | Purpose |
 |-----|--------|---------|---------|
 | `VBUS_SENSE_BOOTLOADER` | 206 | GPIO07 / SIO6[7] | FMU USB sense (**high**) |
-| `FMU_RST_REQ` | 228 | GPIO13 / SIO7[5] | FC reset request (**low** in run) |
+| `FMU_RST_REQ` | 228 | GPIO13 / SIO7[5] | FC reset request — gpio `fmu_rst_req`, pulse **high** then low (carrier pulldown holds idle low) |
 
 Jetson-oriented docs still describe three paths (USB / serial / Ethernet):  
 [autopilot connections](https://docs.arkelectron.com/products/flight-controller/jetson-pabs/ark-jetson-pab-carrier-v3/autopilot-connections.md).  
@@ -216,6 +217,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 | Symptom | Check |
 |---------|--------|
 | `end0` DOWN, no SSH | Overlay not applied (`dtbos=ark-pab-v3.dtbo`) or hog missing — `switch_rst_n` must be out hi in `/sys/kernel/debug/gpio` |
+| ARK-OS FMU reset no-op / EBUSY | Overlay must **not** hog `fmu_rst_req` (SIO7 line 5). `reset_fmu_fast.py` pulses that line high for 100 ms. gpiochips need `root:gpio` 0660 (`99-ark-gpio.rules`) |
 | Still “Just a Jetson” model | `dtbos` still `ark-jaj.dtbo` — redeploy V3 script + reboot |
 | No FMU `/dev/ttyACM0` | `vbus_sense_bootloader` high? Micro USB recovery unplugged? |
 | No Telem2 / UART1 MAVLink | **Expected** on this Modalix SoM rev — use USB (`ttyACM0`) or Ethernet |

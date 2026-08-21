@@ -7,7 +7,9 @@
  * KSZ8795CLX (sheet 15) — SoM GbE is dead until SWITCH_RSTn is high:
  *   - SWITCH_RSTn = SODIMM 211 = SIO7[1] = port7 line 1 → hog output-high
  *   - SW_PMEn     = SODIMM 216 = SIO7[3] = port7 line 3 → hog output-high
- *   - FMU_RST_REQ = SODIMM 228 = SIO7[5] = port7 line 5 → hog output-low
+ *   - FMU_RST_REQ = SODIMM 228 = SIO7[5] = port7 line 5
+ *     Named gpio `fmu_rst_req` (not hogged). Active-high reset request;
+ *     carrier 1V8 pulldown holds it low. ARK-OS pulses it high then low.
  *
  * gpio70/port7 is already status=okay in modalix-som_16g.dtb.
  * VBUS_SENSE_BOOTLOADER = SODIMM 206 = SIO6[7] = port6 line 7 → hog
@@ -145,6 +147,16 @@
 };
 
 &port7 {
+	gpio-line-names =
+		"",
+		"switch_rst_n",
+		"",
+		"sw_pmen",
+		"",
+		"fmu_rst_req",	/* SODIMM 228 — FMU_RST_REQ, pulse high to reset */
+		"",
+		"";
+
 	switch-rst-n-hog {
 		gpio-hog;
 		gpios = <1 0>;
@@ -157,13 +169,6 @@
 		gpios = <3 0>;
 		output-high;
 		line-name = "sw_pmen";
-	};
-
-	fmu-rst-req-hog {
-		gpio-hog;
-		gpios = <5 0>;
-		output-low;
-		line-name = "fmu_rst_req";
 	};
 };
 
