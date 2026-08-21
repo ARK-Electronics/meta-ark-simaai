@@ -209,7 +209,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 | USB-A | **Not on PAB V3** (no J33 / no `USB2_USBSS0_VBUS_EN`) |
 | Board ID EEPROM | **Works** — I2C1 AT24CSW010 `0x50` / unique ID `0x58` word `0x80` |
 | SoM CAN | **N/A** |
-| Mini DisplayPort | Jetson DP vs Modalix HDMI mismatch |
+| Micro HDMI (J14) | **Works** — SM768 on PCIE2 (`card0-HDMI-A-1`). Cable at boot lights the panel. After idle with **no keyboard/mouse**, LightDM/X DPMS turns the monitor Off (`dpms=Off`, `fb0/blank=4`); `ark-hdmi-unblank.sh` + X `-s 0 -dpms` keep it awake. Mini-DP on this carrier is still Jetson DP vs Modalix HDMI TMDS — use the Micro HDMI jack. |
 | UART1 → FC Telem2 | **Unavailable** on this Modalix SoM revision (use USB and/or Ethernet) |
 
 ## Troubleshooting
@@ -223,6 +223,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 | No Telem2 / UART1 MAVLink | **Expected** on this Modalix SoM rev — use USB (`ttyACM0`) or Ethernet |
 | FC not on LAN | Default FC is static `192.168.0.4` on the KSZ, not the office DHCP subnet. From the SoM: `ip addr add 192.168.0.1/24 dev end0` then `ping 192.168.0.4` / UDP 14550. Or DHCP the FC. |
 | Cameras missing | `dmesg \| grep imx219` — expect Detected; mux `i2cmux`, **CSI0+CSI2** (not JAJ CSI1). NACK without modules. |
+| HDMI blank after plug / no KB/mouse | LightDM DPMS 10 min. `cat /sys/class/drm/card0-HDMI-A-1/dpms` Off + `fb0/blank=4` → `sudo /usr/local/sbin/ark-hdmi-unblank.sh`. Persist via deploy (X `-s 0 -dpms`). |
 
 ## Remaining interface bring-up
 

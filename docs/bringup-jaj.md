@@ -181,7 +181,7 @@ functions but **does not expose the same PCIe controllers** on the gold finger.
 |------|------------------|----------------------------------|----------------------|
 | **PCIE0** x4 | M.2 NVMe (Key M), etc. | **Present** — full RX/TX 0–3 + CLK + PERST/CLKREQ/WAKE | **Works** — e.g. `lspci` NVMe (Silicon Motion), `lsblk` shows `nvme0n1` |
 | **PCIE1** x1 | **M.2 Key E** (WiFi/BT modules) | **Not present as PCIe** — SODIMM pins in that region are **ETH1** (and related), plus `PCIE1_CLK_M2C` only; no `PCIE1_RX`/`PCIE1_TX` data pairs | **Unavailable** (SoM pinout) |
-| **PCIE2** x2 | Shared / other | Present (often USB/HDMI bridge path on SiMa carriers) | Used on-module / bridges as applicable |
+| **PCIE2** x2 | HDMI (SM768) | Present — on-module SM768 HDMI to carrier Micro HDMI | **Works** (`card0-HDMI-A-1`). LightDM DPMS 10 min with no KB/mouse blanks the panel; deploy installs `ark-hdmi-unblank.sh` + X `-s 0 -dpms` (same as PAB V3) |
 | **PCIE3** | — | Sideband (PERST/CLKREQ/CLK); not a free Key-E-style x1 | — |
 
 **Key M (NVMe):** Confirmed on hardware with Modalix SoM on JAJ. Rootfs typically remains on
@@ -753,3 +753,4 @@ prefer a real controller over bit-bang).
 | I2C0/I2C1 silent | Redeploy `ark-jaj.dtbo`; `sudo ./scripts/i2c-jaj-test.sh`. I2C0 should show **0x25** (FUSB). I2C1 empty until a device is attached on 40-pin 3/5. Do not load SiMa **uart01** overlay (steals I2C1). |
 | I2C bus numbers not 0/1 | Use script mapping (aliases → `/dev/i2c-N`); do not hard-code bus numbers across images |
 | JAJ CAN connector silent on Modalix | Expected — SoM pins 143/145 **N/A**; TJA1051 not driven; use USB/SPI CAN |
+| HDMI blank after plug / no KB/mouse | Same as PAB V3: LightDM DPMS 10 min. `cat /sys/class/drm/card0-HDMI-A-1/dpms` Off → `sudo /usr/local/sbin/ark-hdmi-unblank.sh`. Persist via `deploy-jaj-dtbo.sh` (X `-s 0 -dpms`). |

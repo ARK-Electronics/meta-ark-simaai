@@ -68,7 +68,17 @@ scp_ "$SYS_POWER_PY" "$SYS_POWER_SVC" "$BOARD:$REMOTE_DIR/"
 # USB init (FUSB301 dual-role + SuperSpeed PM) — works without full kernel TCPM
 USB_INIT="$REPO_DIR/scripts/ark-jaj-usb-init.sh"
 USB_SVC="$REPO_DIR/scripts/ark-jaj-usb.service"
+HDMI_UNBLANK="$REPO_DIR/scripts/ark-hdmi-unblank.sh"
+HDMI_XORG="$REPO_DIR/scripts/10-ark-no-blank.conf"
+HDMI_LDM="$REPO_DIR/scripts/10-ark-hdmi-lightdm.conf"
+HDMI_UDEV="$REPO_DIR/scripts/99-ark-hdmi.rules"
+HDMI_INSTALL="$REPO_DIR/scripts/install-ark-hdmi.sh"
 scp_ "$USB_INIT" "$USB_SVC" "$BOARD:$REMOTE_DIR/"
+[[ -f "$HDMI_UNBLANK" ]] && scp_ "$HDMI_UNBLANK" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_XORG" ]] && scp_ "$HDMI_XORG" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_LDM" ]] && scp_ "$HDMI_LDM" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_UDEV" ]] && scp_ "$HDMI_UDEV" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_INSTALL" ]] && scp_ "$HDMI_INSTALL" "$BOARD:$REMOTE_DIR/" || true
 
 echo "==> Compiling overlay on target"
 ssh_ "dtc -@ -I dts -O dtb -o $REMOTE_DIR/ark-jaj.dtbo $REMOTE_DIR/ark-jaj.dtso && ls -la $REMOTE_DIR/ark-jaj.dtbo"
@@ -106,6 +116,8 @@ systemctl enable ark-jaj-usb.service
 systemctl enable ark-jaj-sys-power.service
 # Apply immediately (pre-reboot) so USB-C dual-role is live now
 /usr/local/sbin/ark-jaj-usb-init.sh || true
+# Same SM768 HDMI as PAB V3: do not let LightDM DPMS sleep the panel
+[ -f $REMOTE_DIR/install-ark-hdmi.sh ] && bash $REMOTE_DIR/install-ark-hdmi.sh $REMOTE_DIR || true
 # Start power publisher now (no reboot required for userspace path)
 systemctl restart ark-jaj-sys-power.service || /usr/local/sbin/ark-jaj-sys-power.py once || true
 sync

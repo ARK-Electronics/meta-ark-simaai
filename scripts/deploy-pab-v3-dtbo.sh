@@ -18,6 +18,11 @@ DTSO="$REPO_DIR/recipes-kernel/ark-carrier-dtbo/files/ark-pab-v3.dtso"
 # historical; this does not install ark-jaj.dtbo.
 USB_INIT="$REPO_DIR/scripts/ark-jaj-usb-init.sh"
 USB_SVC="$REPO_DIR/scripts/ark-jaj-usb.service"
+HDMI_UNBLANK="$REPO_DIR/scripts/ark-hdmi-unblank.sh"
+HDMI_XORG="$REPO_DIR/scripts/10-ark-no-blank.conf"
+HDMI_LDM="$REPO_DIR/scripts/10-ark-hdmi-lightdm.conf"
+HDMI_UDEV="$REPO_DIR/scripts/99-ark-hdmi.rules"
+HDMI_INSTALL="$REPO_DIR/scripts/install-ark-hdmi.sh"
 BOARD="${BOARD:-sima@192.168.7.50}"
 PASSWORD="${PASSWORD:-edgeai}"
 REBOOT=0
@@ -64,6 +69,9 @@ if [ -f $REMOTE_DIR/ark-jaj-usb.service ]; then
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable ark-jaj-usb.service 2>/dev/null || true
   ROLE_POLICY=prefer-host /usr/local/sbin/ark-jaj-usb-init.sh || true
+fi
+if [ -f $REMOTE_DIR/install-ark-hdmi.sh ]; then
+  bash $REMOTE_DIR/install-ark-hdmi.sh $REMOTE_DIR
 fi
 mkdir -p /tmp/boot
 cp -a /boot/uboot.env /boot/uboot-redund.env /tmp/boot/
@@ -231,6 +239,11 @@ ssh_ "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_DIR"
 scp_ "$DTSO" "$BOARD:$REMOTE_DIR/ark-pab-v3.dtso"
 [[ -f "$USB_INIT" ]] && scp_ "$USB_INIT" "$BOARD:$REMOTE_DIR/" || true
 [[ -f "$USB_SVC" ]] && scp_ "$USB_SVC" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_UNBLANK" ]] && scp_ "$HDMI_UNBLANK" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_XORG" ]] && scp_ "$HDMI_XORG" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_LDM" ]] && scp_ "$HDMI_LDM" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_UDEV" ]] && scp_ "$HDMI_UDEV" "$BOARD:$REMOTE_DIR/" || true
+[[ -f "$HDMI_INSTALL" ]] && scp_ "$HDMI_INSTALL" "$BOARD:$REMOTE_DIR/" || true
 
 echo "==> Compiling + installing overlay on target"
 ssh_ "echo '$PASSWORD' | sudo -S bash -c '

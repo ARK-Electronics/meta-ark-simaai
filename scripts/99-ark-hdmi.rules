@@ -1,0 +1,2 @@
+# Re-wake HDMI when the SM768 DRM connector changes (cable plug after boot).
+ACTION=="change", SUBSYSTEM=="drm", RUN+="/usr/local/sbin/ark-hdmi-unblank.sh"
