@@ -11,7 +11,8 @@ MACHINEOVERRIDES =. "modalix:"
 ARK_UBOOT_BOARD ??= "modalix"
 ARK_SOC ??= "modalix"
 
-INIT_MANAGER ??= "systemd"
+# Hard-assign like meta-simaai modalix.conf — ??= loses to poky's POKY_INIT_MANAGER=sysvinit
+INIT_MANAGER = "systemd"
 
 # Kernel / defconfig — Modalix until carrier-specific configs exist
 KBUILD_DEFCONFIG ?= "simaai_modalix_defconfig"
@@ -42,3 +43,7 @@ DEVICETREE_NAME ?= "modalix-som.dtb;boot-0/ modalix-som.dtb;boot-1/"
 
 # Default U-Boot overlay env name (set at runtime via dtbos); board confs override
 ARK_DEFAULT_DTBO ??= ""
+
+# WIC puts overlays/* under boot-0/overlays/, but mmcboot.cmd fatloads
+# ${boot_path}${dtbos} (boot-0/<name>.dtbo). Copy the default overlay there too.
+IMAGE_BOOT_FILES:append = "${@' overlays/%s;boot-0/%s overlays/%s;boot-1/%s' % ((d.getVar('ARK_DEFAULT_DTBO') or '',) * 4) if d.getVar('ARK_DEFAULT_DTBO') else ''}"

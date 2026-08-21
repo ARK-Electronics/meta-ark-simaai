@@ -1,0 +1,25 @@
+In-band SGMII: MAC datapath stays 1G GMII. Copper 10/100 is carried by
+XPCS C37 / PHY in-band status, matching Linux snps,ps-speed = 1000.
+Programming SS=100M_MII when the KSZ8795 links at 100M drops all TX.
+
+diff --git a/drivers/net/dwc_eth_xgmac.c b/drivers/net/dwc_eth_xgmac.c
+--- a/drivers/net/dwc_eth_xgmac.c
++++ b/drivers/net/dwc_eth_xgmac.c
+@@ -371,6 +371,17 @@ static int xgmac_adjust_link(struct udevice *dev, struct link_state state)
+ 		speed = xgmac->phy->speed;
+ 	}
+ 
++	/*
++	 * In-band SGMII: MAC datapath stays 1G GMII. Copper 10/100 is
++	 * carried by XPCS C37 / PHY in-band status, matching Linux
++	 * snps,ps-speed = <1000> on modalix-som. Programming SS=100M_MII
++	 * here drops all TX (ARK PAB V3 KSZ8795 10/100).
++	 */
++	if (xgmac->config->interface &&
++	    xgmac->config->interface(dev) == PHY_INTERFACE_MODE_SGMII &&
++	    (speed == SPEED_100 || speed == SPEED_10))
++		speed = SPEED_1000;
++
+ 	if (duplex)
+ 		ret = xgmac_set_full_duplex(dev);
+ 	else

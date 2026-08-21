@@ -1,0 +1,25 @@
+After C37 SGMII AN, program VR_MII_MMD_CTRL speed bits from copper.
+
+diff --git a/drivers/net/dwc_eth_xgmac_modalix.c b/drivers/net/dwc_eth_xgmac_modalix.c
+--- a/drivers/net/dwc_eth_xgmac_modalix.c
++++ b/drivers/net/dwc_eth_xgmac_modalix.c
+@@ -541,6 +541,19 @@
+ 			state->duplex = DUPLEX_FULL;
+ 		else
+ 			state->duplex = DUPLEX_HALF;
++
++		{
++			u32 mdio = xpcs_read(xpcs, DW_VR_MII_MMD_CTRL);
++
++			mdio &= ~(SGMII_SPEED_SS6 | SGMII_SPEED_SS5 |
++				  SGMII_SPEED_SS13);
++			if (state->speed == SPEED_1000)
++				mdio |= SGMII_SPEED_SS6;
++			else if (state->speed == SPEED_100)
++				mdio |= SGMII_SPEED_SS13;
++			mdio |= AN_CL37_EN;
++			xpcs_write(xpcs, DW_VR_MII_MMD_CTRL, mdio);
++		}
+ 	}
+ 
+ 	ret &= ~(DW_VR_MII_CL37_ANCMPLT_INTR);

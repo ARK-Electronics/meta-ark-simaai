@@ -14,6 +14,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DTSO="$REPO_DIR/recipes-kernel/ark-carrier-dtbo/files/ark-pab-v3.dtso"
+# FUSB301 Type-C helper (same chip as JAJ @ i2c-0 0x25). Filenames are
+# historical; this does not install ark-jaj.dtbo.
 USB_INIT="$REPO_DIR/scripts/ark-jaj-usb-init.sh"
 USB_SVC="$REPO_DIR/scripts/ark-jaj-usb.service"
 BOARD="${BOARD:-sima@192.168.7.50}"
@@ -91,7 +93,14 @@ port, dtso, usb_init, usb_svc, password, reboot = sys.argv[1:7]
 reboot = reboot == "1"
 
 def open_ser():
-    s = serial.Serial(port, 115200, timeout=0.25)
+    # Do not assert DTR/RTS: on this SoM they reset the board.
+    s = serial.Serial()
+    s.port = port
+    s.baudrate = 115200
+    s.timeout = 0.25
+    s.dtr = False
+    s.rts = False
+    s.open()
     time.sleep(0.1)
     s.reset_input_buffer()
     return s
@@ -165,7 +174,8 @@ install = (
     "[ -f $R/ark-jaj-usb-init.sh ] && install -d /usr/local/sbin && "
     "install -m 0755 $R/ark-jaj-usb-init.sh /usr/local/sbin/ark-jaj-usb-init.sh || true; "
     "[ -f $R/ark-jaj-usb.service ] && install -m 0644 $R/ark-jaj-usb.service "
-    "/etc/systemd/system/ark-jaj-usb.service && systemctl daemon-reload || true; "
+    "/etc/systemd/system/ark-jaj-usb.service && systemctl daemon-reload && "
+    "systemctl enable ark-jaj-usb.service || true; "
     "mkdir -p /tmp/boot; cp -a /boot/uboot.env /boot/uboot-redund.env /tmp/boot/; "
     "printf \"%s\\n\" \"/tmp/boot/uboot.env 0x0000 0x80000\" "
     "\"/tmp/boot/uboot-redund.env 0x0000 0x80000\" > /tmp/fw_env.config; "

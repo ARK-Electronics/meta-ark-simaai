@@ -134,6 +134,9 @@ if ! grep -q 'ARK Modalix carrier overrides' "$LOCAL_CONF" 2>/dev/null; then
 MACHINE = "ark-jaj"
 LICENSE_FLAGS_ACCEPTED += "commercial"
 
+# SiMa Modalix / ARK images require systemd (poky defaults to sysvinit)
+POKY_INIT_MANAGER = "systemd"
+
 # meta-simaai sample points at an internal mirror; use public sources
 SOURCE_MIRROR_URL = ""
 INHERIT:remove = "own-mirrors"

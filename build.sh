@@ -55,6 +55,13 @@ fi
 echo "==> Machine: $MACHINE"
 echo "==> Workspace: $WS"
 
+# GNU tar >= 1.35 uses openat2(), which pseudo cannot intercept; without this
+# shim do_package fails in perform_packagecopy for every recipe.
+# See scripts/hosttools/no_openat2.c
+SHIM_DIR="$("$SCRIPT_DIR/scripts/hosttools/setup-hosttools-shim.sh" "$WS/hosttools-shim")"
+export PATH="$SHIM_DIR:$PATH"
+echo "==> hosttools shim: $SHIM_DIR (tar -> no_openat2 preload)"
+
 set +u
 # shellcheck disable=SC1091
 source "$WS/poky/oe-init-build-env" "$WS/build" >/dev/null
@@ -67,6 +74,14 @@ if grep -q '^MACHINE ' "$WS/build/conf/local.conf"; then
     sed -i "s/^MACHINE .*/MACHINE = \"$MACHINE\"/" "$WS/build/conf/local.conf"
 else
     echo "MACHINE = \"$MACHINE\"" >> "$WS/build/conf/local.conf"
+fi
+
+# bitbake only populates tmp/hosttools when a link is missing, so an existing
+# tar -> /usr/bin/tar symlink would bypass the shim. Drop it if it is stale.
+STALE_TAR="${TMPDIR:-$WS/build/tmp}/hosttools/tar"
+if [ -L "$STALE_TAR" ] && [ "$(readlink "$STALE_TAR")" != "$SHIM_DIR/tar" ]; then
+    echo "==> refreshing stale hosttools tar symlink"
+    rm -f "$STALE_TAR"
 fi
 
 echo "==> bitbake simaai-image-minimal (MACHINE=$MACHINE)"

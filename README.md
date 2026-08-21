@@ -14,7 +14,7 @@ Workflow mirrors [`ark_jetson_kernel`](https://github.com/ARK-Electronics/ark_je
 |---------------|---------------------------------|-------------|
 | `ark-jaj`     | ARK Just a Jetson               | DT overlay live (eLxr) |
 | `ark-pab`     | ARK Jetson PAB Carrier          | DT overlay live (eLxr) |
-| `ark-pab-v3`  | ARK Jetson PAB V3 Carrier       | DT overlay live (eLxr) |
+| `ark-pab-v3`  | ARK Jetson PAB V3 Carrier       | eLxr netboot + DT overlay (KSZ 100M) |
 | `ark-can-pab` | ARK Jetson CAN PAB Carrier      | Framework   |
 
 All machines inherit Modalix SoM defaults from `meta-simaai` and layer
@@ -49,6 +49,8 @@ SETUP_INSTALL_DEPS=1 ./setup.sh
 ```
 
 Full bring-up notes: **[docs/bringup-jaj.md](docs/bringup-jaj.md)**.
+PAB V3 (KSZ8795, USB-C FT230X, sima-cli eLxr flash):
+**[docs/bringup-pab-v3.md](docs/bringup-pab-v3.md)**.
 
 ### Manual layer add (if not using setup.sh)
 
