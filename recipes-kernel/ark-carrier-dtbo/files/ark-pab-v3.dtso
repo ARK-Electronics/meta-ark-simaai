@@ -9,10 +9,11 @@
  *   - SW_PMEn     = SODIMM 216 = SIO7[3] = port7 line 3 → hog output-high
  *   - FMU_RST_REQ = SODIMM 228 = SIO7[5] = port7 line 5 → hog output-low
  *
- * gpio70/port7 is already status=okay in modalix-som_16g.dtb. Hog only those
- * three pads. Do not hog CAM0/CAM1 PWDN (SIO5[6]/[7]) or VBUS_SENSE
- * (SIO6[7]) in the same overlay: with the KSZ hogs they brown out this SoM
- * on 5 V PAB (kernel resets at Starting kernel).
+ * gpio70/port7 is already status=okay in modalix-som_16g.dtb.
+ * VBUS_SENSE_BOOTLOADER = SODIMM 206 = SIO6[7] = port6 line 7 → hog
+ * output-high so ARKV6X FMU enumerates on USB (/dev/ttyACM0).
+ * Do not hog CAM0/CAM1 PWDN (SIO5[6]/[7]) or FUSB INT_N (SIO6[0]) in the
+ * same overlay: those plus KSZ brown out 5 V PAB at Starting kernel.
  *
  * Copper is 10/100. Keep MAC snps,ps-speed = 1000 (in-band SGMII / 1G GMII)
  * and limit the Marvell 88E1510 with max-speed = <100>.
@@ -68,6 +69,15 @@
 		gpios = <5 0>;
 		output-low;
 		line-name = "fmu_rst_req";
+	};
+};
+
+&port6 {
+	vbus-sense-bootloader-hog {
+		gpio-hog;
+		gpios = <7 0>;
+		output-high;
+		line-name = "vbus_sense_bootloader";
 	};
 };
 

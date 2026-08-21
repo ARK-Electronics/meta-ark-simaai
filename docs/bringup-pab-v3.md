@@ -62,8 +62,10 @@ ls /sys/bus/i2c/devices/ | grep -E '0025|0050'
 
 KSZ `SWITCH_RSTn` / `SW_PMEn` and `FMU_RST_REQ` are **Linux gpio-hogs on
 port7** (`ark-pab-v3.dtbo`). `gpio70` is already enabled in
-`modalix-som_16g.dtb`. Do **not** hog CAM PWDN or `VBUS_SENSE` in the same
-overlay — that combination browns out 5 V PAB at `Starting kernel`.
+`modalix-som_16g.dtb`. `VBUS_SENSE_BOOTLOADER` is a **port6** hog
+(SIO6[7] output-high) so the ARKV6X enumerates on USB at boot. Do **not**
+hog CAM PWDN or FUSB `INT_N` (SIO6[0]) in the same overlay — those plus
+KSZ brown out 5 V PAB at `Starting kernel`.
 
 U-Boot `gpios-ark-pab-v3.cmd` / `preboot=run ark_gpios` is still required for
 **U-Boot TFTP** (before Linux).
@@ -163,7 +165,7 @@ Unlike PAB (quad + TCA9546), V3 is **dual IMX219** with **FSUSB42** mux (JAJ-lik
 
 ### Flight controller links (ARKV6S / ARKV6X)
 
-Verified on **Modalix SoM + PAB V3** with ARKV6S:
+Verified on **Modalix SoM + PAB V3** with ARKV6X (`3185:0039`):
 
 | Path | Jetson/PAB role | Modalix status |
 |------|-----------------|----------------|
@@ -214,5 +216,8 @@ as JAJ — not the SoM USB-C debug FT230X (USB2 UART). Stock FUSB is SNK
 DRP try-SRC and keeps the SS hub out of autosuspend. INT_N hog next to KSZ
 resets 5 V PAB; I2C programming is enough.
 
+**FMU USB** is default: overlay hog `vbus_sense_bootloader` (SIO6[7]
+output-high) → `lsusb` `3185:0039 ARK ARK FMU v6X.x`, `/dev/ttyACM0`.
+
 Still to verify on 5 V PAB next to the KSZ hogs: cameras/CSI, NVMe, payload
-headers, FC USB/Ethernet.
+headers, FC Ethernet/MAVLink beyond USB CDC.
