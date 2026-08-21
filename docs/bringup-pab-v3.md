@@ -152,16 +152,20 @@ mii info
 
 ### Cameras (2× dual-lane CSI)
 
-Unlike PAB (quad + TCA9546), V3 is **dual IMX219** with **FSUSB42** mux (JAJ-like):
+Unlike PAB (quad + TCA9546), V3 is **dual IMX219** with **FSUSB42** mux (same
+as JAJ / the Jetson IMX219 dual overlay):
 
-| Connector | Mux | CSI (Modalix) |
-|-----------|-----|---------------|
-| CAM0 (J28) | sel=0 | **CSI0** `40c0000` |
-| CAM1 (J25) | sel=1 | **CSI2** `40c6000` |
+| Connector | Mux | CSI (Modalix) | After overlay |
+|-----------|-----|---------------|---------------|
+| CAM0 (J28) | sel=0 | **CSI1** `40c3000` | `imx219 6-0010` → `/dev/video0` |
+| CAM1 (J25) | sel=1 | **CSI2** `40c6000` | `imx219 5-0010` → `/dev/video1` |
 
-- `CAM_MUX_SEL` = SODIMM 130 = GPIO06 = port6 line 6  
-- CAM0/CAM1 PWDN = port5 GPIO6/7 held high  
-- Without modules, `imx219` I2C NACK is expected  
+- `CAM_MUX_SEL` = SODIMM 130 = GPIO06 = port6 line 6 (`i2c-mux-gpio`)
+- CAM0/CAM1 PWDN = port5 GPIO6/7 via **imx219 `reset-gpios`** (released high
+  at sensor probe). Do **not** gpio-hog these next to the KSZ hogs — that
+  browns out 5 V PAB at `Starting kernel`.
+- Verified: both sensors `Detected IMX219` / `Probe is successful`. Without
+  modules, I2C NACK (`-121`) is expected.
 
 ### Flight controller links (ARKV6S / ARKV6X)
 
@@ -188,7 +192,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 
 | Interface | Status on PAB V3 + Modalix |
 |-----------|----------------------------|
-| M.2 Key M NVMe | PCIE0 — works when seated |
+| M.2 Key M NVMe | **Works** — PCIE0 `nvme0n1` (e.g. Samsung 980 512 G) |
 | M.2 Key E WiFi | **Unavailable** (no PCIE1) |
 | SoM CAN | **N/A** |
 | Mini DisplayPort | Jetson DP vs Modalix HDMI mismatch |
@@ -203,7 +207,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 | No FMU `/dev/ttyACM0` | `vbus_sense_bootloader` high? Micro USB recovery unplugged? |
 | No Telem2 / UART1 MAVLink | **Expected** on this Modalix SoM rev — use USB (`ttyACM0`) or Ethernet |
 | FC not on LAN | FC still static `192.168.0.4`? Set `BOOTPROTO=dhcp` + `netman update` on the FC |
-| Cameras missing | Dual CSI0/CSI2 + FSUSB42; PWDN is not hogged (5 V brownout). Still bring-up. |
+| Cameras missing | `dmesg \| grep imx219` — expect Detected; mux `i2cmux`, CSI1+CSI2. NACK without modules. |
 
 ## Remaining interface bring-up
 
@@ -219,5 +223,13 @@ resets 5 V PAB; I2C programming is enough.
 **FMU USB** is default: overlay hog `vbus_sense_bootloader` (SIO6[7]
 output-high) → `lsusb` `3185:0039 ARK ARK FMU v6X.x`, `/dev/ttyACM0`.
 
-Still to verify on 5 V PAB next to the KSZ hogs: cameras/CSI, NVMe, payload
-headers, FC Ethernet/MAVLink beyond USB CDC.
+**M.2 NVMe** (PCIE0) enumerates with the stock SoM DTB; overlay keeps
+`pcie0_rc` okay. Example: `144d:a809` Samsung 980, `nvme0n1` 476.9 G (may
+still hold a prior Jetson partition table).
+
+**Cameras:** overlay mux + CSI1/CSI2 + `reset-gpios`. Both IMX219 bind
+(`5-0010` / `6-0010`), `/dev/video0` and `/dev/video1`. Raw `STREAMON` on
+SiMa `raw-capture` is not a complete ISP pipeline yet.
+
+Still to verify: payload headers, FC Ethernet/MAVLink beyond USB CDC,
+camera streaming through the SiMa CSI/ISP path.
