@@ -29,8 +29,9 @@ needs SiMa to ship a UDC + `CONFIG_USB_GADGET` (and role-switch wiring to USB0).
 
 PAB V3 uses the same TUSB73x0 + FUSB301@i2c-0 `0x25` path on the **carrier**
 USB-C (verified SuperSpeed mass-storage at 5000M after `ROLE_POLICY=prefer-host`).
-Do not confuse that with the SoM USB-C FT230X console. `deploy-pab-v3-dtbo.sh`
-installs `ark-jaj-usb.service` with a PAB V3 drop-in `Environment=ROLE_POLICY=prefer-host`.
+PAB V3 has **no USB-A**. Do not confuse carrier USB-C with the SoM USB-C
+FT230X console. `deploy-pab-v3-dtbo.sh` installs `ark-jaj-usb.service` with a
+PAB V3 drop-in `Environment=ROLE_POLICY=prefer-host`.
 
 ## Carrier schematic (JAJ Rev 2.0)
 

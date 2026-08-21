@@ -56,8 +56,9 @@ tr '\0' ' ' < /proc/device-tree/compatible; echo
 ip -br a
 # end0 … UP … 100Mb/s (DHCP or static)
 
-# Unique ID EEPROM + FUSB
+# Unique ID EEPROM (I2C1 0x50) + FUSB (I2C0 0x25)
 ls /sys/bus/i2c/devices/ | grep -E '0025|0050'
+sudo i2ctransfer -y 1 w1@0x58 0x80 r16   # 128-bit factory ID
 ```
 
 KSZ `SWITCH_RSTn` / `SW_PMEn` and `FMU_RST_REQ` are **Linux gpio-hogs on
@@ -184,7 +185,7 @@ Verified on **Modalix SoM + PAB V3** with ARKV6X (`3185:0039`):
 | Path | Jetson/PAB role | Modalix status |
 |------|-----------------|----------------|
 | **USB** | `/dev/ttyACM0` (FMU USB) | **Works** — hog `vbus_sense_bootloader` high |
-| **Ethernet** | Onboard KSZ8795 to FC eth0 | **Works** — same L2 as SoM `end0`; use DHCP on the FC (`netman` / `net.cfg` `BOOTPROTO=dhcp`) so it shares the LAN with the SoM |
+| **Ethernet** | Onboard KSZ8795 to FC eth0 | **Works** — FC default `192.168.0.4`; ICMP ~0.3 ms and MAVLink v2 UDP **14550** from the SoM. Office DHCP on `end0` is a different subnet (`192.168.7.0/24` here), so add a secondary address on the SoM (`ip addr add 192.168.0.1/24 dev end0`) or set the FC to DHCP (`netman` / `net.cfg` `BOOTPROTO=dhcp`) |
 | **UART1 → Telem2** | Companion serial (e.g. Jetson `/dev/ttyTHS1`) | **Does not work on this Modalix SoM revision** |
 
 **UART1 / Telem2:** On this Modalix SoM revision, **UART1 is not usable for the carrier Telem2 path**, so the flight controller’s **Telem2** link to the companion will not come up. Prefer **USB** (MAVLink CDC ACM) and/or **Ethernet** (MAVLink/XRCE-DDS once configured). Do not plan XRCE-DDS or MAVLink over Telem2 for Modalix + PAB V3.
@@ -204,6 +205,8 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 |-----------|----------------------------|
 | M.2 Key M NVMe | **Works** — PCIE0 `nvme0n1` (e.g. Samsung 980 512 G) |
 | M.2 Key E WiFi | **Unavailable** (no PCIE1) |
+| USB-A | **Not on PAB V3** (no J33 / no `USB2_USBSS0_VBUS_EN`) |
+| Board ID EEPROM | **Works** — I2C1 AT24CSW010 `0x50` / unique ID `0x58` word `0x80` |
 | SoM CAN | **N/A** |
 | Mini DisplayPort | Jetson DP vs Modalix HDMI mismatch |
 | UART1 → FC Telem2 | **Unavailable** on this Modalix SoM revision (use USB and/or Ethernet) |
@@ -216,7 +219,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 | Still “Just a Jetson” model | `dtbos` still `ark-jaj.dtbo` — redeploy V3 script + reboot |
 | No FMU `/dev/ttyACM0` | `vbus_sense_bootloader` high? Micro USB recovery unplugged? |
 | No Telem2 / UART1 MAVLink | **Expected** on this Modalix SoM rev — use USB (`ttyACM0`) or Ethernet |
-| FC not on LAN | FC still static `192.168.0.4`? Set `BOOTPROTO=dhcp` + `netman update` on the FC |
+| FC not on LAN | Default FC is static `192.168.0.4` on the KSZ, not the office DHCP subnet. From the SoM: `ip addr add 192.168.0.1/24 dev end0` then `ping 192.168.0.4` / UDP 14550. Or DHCP the FC. |
 | Cameras missing | `dmesg \| grep imx219` — expect Detected; mux `i2cmux`, **CSI0+CSI2** (not JAJ CSI1). NACK without modules. |
 
 ## Remaining interface bring-up
@@ -241,4 +244,17 @@ still hold a prior Jetson partition table).
 + `reset-gpios`. Both IMX219 bind; libcamera Modalix ISP captures 3280×2464
 NV12 at ~15 fps (`cam -c 1` / `cam -c 2`).
 
-Still to verify: payload headers, FC Ethernet/MAVLink beyond USB CDC.
+**Board ID EEPROM:** I2C1 AT24CSW010. Overlay binds `eeprom@50` (`1-0050`).
+Factory unique ID (this board): `i2ctransfer -y 1 w1@0x58 0x80 r16` →
+`11 30 44 00 84 10 08 52 e4 87 a2 80 a2 80 00 51`. User memory is 0xFF
+until programmed. No INA238 on V3 (JAJ-only).
+
+**FMU Ethernet:** KSZ L2 to the ARKV6X. Factory FC address is
+`192.168.0.4` (`aa:f3:2b:e5:28:e5`). SoM office DHCP does not put the
+companion on that subnet — add `192.168.0.1/24` on `end0` (or DHCP the
+FC). Verified: ping 0.3 ms, MAVLink v2 HEARTBEAT on UDP 14550 (sysid 1).
+USB CDC `/dev/ttyACM0` still works in parallel.
+
+PAB V3 has **no USB-A**.
+
+Still to verify: payload headers (I2C/SPI/UART/Ethernet FFC).

@@ -33,6 +33,10 @@
  * enough for ark-jaj-usb-init.sh (DEVICEID 0x12). Leave SIO6[0] alone.
  *
  * M.2 Key M NVMe is PCIE0 (stock SoM DTB already okay; keep it explicit).
+ *
+ * Unique ID EEPROM is AT24CSW010 on I2C1 (i2c01 / /dev/i2c-1): memory @ 0x50,
+ * security window @ 0x58, factory 128-bit ID at word 0x80. No USB-A on V3
+ * (do not hog USB2_USBSS0_VBUS_EN).
  */
 
 /dts-v1/;
@@ -190,6 +194,22 @@
 			power-role = "dual";
 			try-power-role = "source";
 		};
+	};
+};
+
+&i2c01 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* AT24CSW010 — user memory @ 0x50; unique ID @ 0x58 word 0x80 */
+	pabv3_id_eeprom: eeprom@50 {
+		compatible = "atmel,24c01";
+		reg = <0x50>;
+		pagesize = <16>;
+		size = <128>;
+		status = "okay";
 	};
 };
 
