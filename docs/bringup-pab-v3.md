@@ -205,6 +205,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 
 ## Remaining interface bring-up
 
-Ethernet (KSZ hog + 100 M PHY) and eMMC flash are in this tree. Still to
-verify on 5 V PAB next to those KSZ hogs: cameras/CSI (JAJ-proven, not in
-this overlay), FUSB, NVMe, payload headers, FC USB/Ethernet.
+Ethernet (KSZ hog + 100 M PHY), FUSB301 on i2c-0 `0x25` (I2C only; INT_N
+hog next to KSZ resets 5 V PAB), and eMMC flash are in this tree. Still to
+verify on 5 V PAB next to those KSZ hogs: cameras/CSI, NVMe, payload
+headers, FC USB/Ethernet.

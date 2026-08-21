@@ -17,8 +17,13 @@
  * Copper is 10/100. Keep MAC snps,ps-speed = 1000 (in-band SGMII / 1G GMII)
  * and limit the Marvell 88E1510 with max-speed = <100>.
  *
- * Cameras / FUSB / CSI are valid on JAJ; they are not in this overlay until
- * they are proven next to the KSZ hogs on 5 V PAB.
+ * FUSB301 @ i2c00 0x25 (same chip as JAJ). INT_N is USB0_VBUS_DETn = SIO6[0].
+ * Disabling the SoM uart-hog and hogging that pad as input + pull-up (JAJ)
+ * next to the KSZ hogs resets 5 V PAB at Starting kernel. I2C to 0x25 is
+ * enough for ark-jaj-usb-init.sh (DEVICEID 0x12). Leave SIO6[0] alone.
+ *
+ * Cameras / CSI are valid on JAJ; not in this overlay until proven next to
+ * the KSZ hogs on 5 V PAB.
  */
 
 /dts-v1/;
@@ -63,5 +68,26 @@
 		gpios = <5 0>;
 		output-low;
 		line-name = "fmu_rst_req";
+	};
+};
+
+&i2c00 {
+	status = "okay";
+	clock-frequency = <400000>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pabv3_fusb301: fusb301@25 {
+		compatible = "fcs,fusb301", "onnn,fusb301";
+		reg = <0x25>;
+		status = "okay";
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "dual";
+			power-role = "dual";
+			try-power-role = "source";
+		};
 	};
 };
