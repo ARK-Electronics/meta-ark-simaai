@@ -17,9 +17,11 @@
  * Starting kernel. Camera PWDN is imx219 reset-gpios (released high at
  * sensor probe, after the switch is already up).
  *
- * Dual IMX219 (same Jetson dual overlay as JAJ / PAB V3):
- *   - CAM_I2C = i2c52 → FSUSB42 mux, CAM_MUX_SEL = port6 line 6
- *   - CAM0 J28 sel=0 → CSI1 (csi@40c3000); CAM1 J25 sel=1 → CSI2
+ * Dual IMX219 (FSUSB42 mux, same as JAJ electrically on I2C/PWDN):
+ *   - CAM_I2C = i2c52 → FSUSB42, CAM_MUX_SEL = port6 line 6
+ *   - Lanes differ from JAJ. Jetson PAB V3 dual overlay is CSI0+CSI2
+ *     (serial_a + serial_c); JAJ is CSI1+CSI2 (serial_b + serial_c).
+ *   - CAM0 J28 sel=0 → CSI0 (csi@40c0000); CAM1 J25 sel=1 → CSI2
  *   - CAM0/CAM1 PWDN = port5 GPIO6/7 via reset-gpios, not gpio-hogs
  *
  * Copper is 10/100. Keep MAC snps,ps-speed = 1000 (in-band SGMII / 1G GMII)
@@ -71,7 +73,7 @@
 		mux-gpios = <&port6 6 0>;
 		idle-state = <0>;
 
-		/* CAM0 — CSI1 / J28 */
+		/* CAM0 — CSI0 / J28 (PAB V3; JAJ uses CSI1 here) */
 		i2c@0 {
 			reg = <0>;
 			#address-cells = <1>;
@@ -92,7 +94,7 @@
 						clock-lanes = <0>;
 						data-lanes = <1 2>;
 						link-frequencies = /bits/ 64 <456000000>;
-						remote-endpoint = <&csi10in>;
+						remote-endpoint = <&csi00in>;
 						clock-noncontinuous;
 					};
 				};
@@ -197,37 +199,37 @@
 	clock-frequency = <400000>;
 };
 
-/* CSI1 (CAM0/J28) + CSI2 (CAM1/J25) — same dual-cam map as JAJ */
+/* CSI0 (CAM0/J28) + CSI2 (CAM1/J25) — PAB V3 lanes, not JAJ CSI1+CSI2 */
 &csi0 {
-	status = "disabled";
-};
-
-&csi1 {
 	status = "okay";
 };
 
-&axi_vdma1 {
+&axi_vdma0 {
 	status = "okay";
 };
 
-&mipi_dphy_rx1 {
+&mipi_dphy_rx0 {
 	status = "okay";
 };
 
-&v4l2video1 {
+&v4l2video0 {
 	status = "okay";
 };
 
-&v4l2vdma1 {
+&v4l2vdma0 {
 	status = "okay";
 };
 
-&csi10in {
+&csi00in {
 	clock-lanes = <0>;
 	data-lanes = <1 2>;
 	link-frequencies = /bits/ 64 <456000000>;
 	remote-endpoint = <&pabv3_cam0_ep>;
 	clock-noncontinuous;
+};
+
+&csi1 {
+	status = "disabled";
 };
 
 &csi2 {
