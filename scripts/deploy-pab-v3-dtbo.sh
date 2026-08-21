@@ -58,9 +58,12 @@ if [ -f $REMOTE_DIR/ark-jaj-usb-init.sh ]; then
 fi
 if [ -f $REMOTE_DIR/ark-jaj-usb.service ]; then
   install -m 0644 $REMOTE_DIR/ark-jaj-usb.service /etc/systemd/system/ark-jaj-usb.service
+  mkdir -p /etc/systemd/system/ark-jaj-usb.service.d
+  printf '%s\n' '[Service]' 'Environment=ROLE_POLICY=prefer-host' \
+    > /etc/systemd/system/ark-jaj-usb.service.d/pab-v3.conf
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable ark-jaj-usb.service 2>/dev/null || true
-  /usr/local/sbin/ark-jaj-usb-init.sh || true
+  ROLE_POLICY=prefer-host /usr/local/sbin/ark-jaj-usb-init.sh || true
 fi
 mkdir -p /tmp/boot
 cp -a /boot/uboot.env /boot/uboot-redund.env /tmp/boot/
@@ -174,8 +177,11 @@ install = (
     "[ -f $R/ark-jaj-usb-init.sh ] && install -d /usr/local/sbin && "
     "install -m 0755 $R/ark-jaj-usb-init.sh /usr/local/sbin/ark-jaj-usb-init.sh || true; "
     "[ -f $R/ark-jaj-usb.service ] && install -m 0644 $R/ark-jaj-usb.service "
-    "/etc/systemd/system/ark-jaj-usb.service && systemctl daemon-reload && "
-    "systemctl enable ark-jaj-usb.service || true; "
+    "/etc/systemd/system/ark-jaj-usb.service && "
+    "mkdir -p /etc/systemd/system/ark-jaj-usb.service.d && "
+    "printf '%s\\n' '[Service]' 'Environment=ROLE_POLICY=prefer-host' "
+    "> /etc/systemd/system/ark-jaj-usb.service.d/pab-v3.conf && "
+    "systemctl daemon-reload && systemctl enable ark-jaj-usb.service || true; "
     "mkdir -p /tmp/boot; cp -a /boot/uboot.env /boot/uboot-redund.env /tmp/boot/; "
     "printf \"%s\\n\" \"/tmp/boot/uboot.env 0x0000 0x80000\" "
     "\"/tmp/boot/uboot-redund.env 0x0000 0x80000\" > /tmp/fw_env.config; "

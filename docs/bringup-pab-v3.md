@@ -205,7 +205,14 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 
 ## Remaining interface bring-up
 
-Ethernet (KSZ hog + 100 M PHY), FUSB301 on i2c-0 `0x25` (I2C only; INT_N
-hog next to KSZ resets 5 V PAB), and eMMC flash are in this tree. Still to
-verify on 5 V PAB next to those KSZ hogs: cameras/CSI, NVMe, payload
+Ethernet (KSZ hog + 100 M PHY), FUSB301 on i2c-0 `0x25`, and eMMC flash
+are in this tree.
+
+**USB-C SuperSpeed** is the **carrier** USB-C (TUSB73x0 `usb2` 5000M), same
+as JAJ — not the SoM USB-C debug FT230X (USB2 UART). Stock FUSB is SNK
+(`MODES=0x04`); `ark-jaj-usb.service` with `ROLE_POLICY=prefer-host` programs
+DRP try-SRC and keeps the SS hub out of autosuspend. INT_N hog next to KSZ
+resets 5 V PAB; I2C programming is enough.
+
+Still to verify on 5 V PAB next to the KSZ hogs: cameras/CSI, NVMe, payload
 headers, FC USB/Ethernet.

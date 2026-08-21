@@ -27,6 +27,11 @@ Live kernel (`6.18.3-modalix`):
 So dual-role **CC** can be improved in software; dual-role **device enumeration**
 needs SiMa to ship a UDC + `CONFIG_USB_GADGET` (and role-switch wiring to USB0).
 
+PAB V3 uses the same TUSB73x0 + FUSB301@i2c-0 `0x25` path on the **carrier**
+USB-C (verified SuperSpeed mass-storage at 5000M after `ROLE_POLICY=prefer-host`).
+Do not confuse that with the SoM USB-C FT230X console. `deploy-pab-v3-dtbo.sh`
+installs `ark-jaj-usb.service` with a PAB V3 drop-in `Environment=ROLE_POLICY=prefer-host`.
+
 ## Carrier schematic (JAJ Rev 2.0)
 
 - USB-C: `USBSS0` + `USB0_D±` + FUSB301 + FUSB340 mux
