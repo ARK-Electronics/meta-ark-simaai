@@ -60,9 +60,13 @@ ip -br a
 ls /sys/bus/i2c/devices/ | grep -E '0025|0050'
 ```
 
-KSZ `SWITCH_RSTn` / `SW_PMEn` / `VBUS_SENSE` / `FMU_RST_REQ` are driven from
-**U-Boot** (`gpios-ark-pab-v3.cmd` / `preboot=run ark_gpios`), not Linux
-gpio-hogs — hogging them at kernel probe browns out this SoM on 5 V PAB.
+KSZ `SWITCH_RSTn` / `SW_PMEn` and `FMU_RST_REQ` are **Linux gpio-hogs on
+port7** (`ark-pab-v3.dtbo`). `gpio70` is already enabled in
+`modalix-som_16g.dtb`. Do **not** hog CAM PWDN or `VBUS_SENSE` in the same
+overlay — that combination browns out 5 V PAB at `Starting kernel`.
+
+U-Boot `gpios-ark-pab-v3.cmd` / `preboot=run ark_gpios` is still required for
+**U-Boot TFTP** (before Linux).
 
 U-Boot env set by the deploy script:
 
@@ -192,7 +196,7 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 
 | Symptom | Check |
 |---------|--------|
-| `end0` DOWN, no SSH | KSZ still in reset — `run ark_gpios` in U-Boot / `pab-v3-firstboot.sh`; overlay is `ark-pab-v3.dtbo` (not JAJ/PAB) |
+| `end0` DOWN, no SSH | Overlay not applied (`dtbos=ark-pab-v3.dtbo`) or hog missing — `switch_rst_n` must be out hi in `/sys/kernel/debug/gpio` |
 | Still “Just a Jetson” model | `dtbos` still `ark-jaj.dtbo` — redeploy V3 script + reboot |
 | No FMU `/dev/ttyACM0` | `vbus_sense_bootloader` high? Micro USB recovery unplugged? |
 | No Telem2 / UART1 MAVLink | **Expected** on this Modalix SoM rev — use USB (`ttyACM0`) or Ethernet |
@@ -201,6 +205,6 @@ On Modalix, treat **serial/Telem2 as N/A** for this SoM revision.
 
 ## Remaining interface bring-up
 
-Ethernet, FMU USB, and eMMC flash are in this tree. Still to verify on the
-carrier: cameras (PWDN from userspace), KSZ SPI0 management, NVMe, payload
-headers, and FC Ethernet/MAVLink beyond USB CDC.
+Ethernet (KSZ hog + 100 M PHY) and eMMC flash are in this tree. Still to
+verify on 5 V PAB next to those KSZ hogs: cameras/CSI (JAJ-proven, not in
+this overlay), FUSB, NVMe, payload headers, FC USB/Ethernet.
